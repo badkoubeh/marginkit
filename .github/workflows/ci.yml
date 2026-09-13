@@ -1,0 +1,120 @@
+# marginkit CI. ROADMAP section 2's "no CI-as-a-service" non-goal forbids *building* a CI
+# service; using GitHub Actions is what zeta-bench already does.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint and types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: ruff format --check .
+      # mypy is configured with files = ["src"] and strict = true in pyproject.toml.
+      - run: mypy
+
+  test:
+    name: test (py${{ matrix.python-version }}, ${{ matrix.deps }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # Four jobs, not a 3x2 cross product. The minimum-versions entry is Python 3.11 only
+      # because the floor set is not installable above it: numpy 1.26.0 and scipy 1.11.0 both
+      # declare python_requires <3.13, and neither they nor statsmodels 0.14.0 publish cp313
+      # wheels. A newer interpreter only ever resolves to newer dependencies, so testing the
+      # floor on 3.11 is the entire guarantee plan R9 asks for. See ci/constraints-min.txt.
+      # Do not expand this into a full cross product; it cannot resolve.
+      matrix:
+        include:
+          - python-version: "3.11"
+            deps: latest
+          - python-version: "3.12"
+            deps: latest
+          - python-version: "3.13"
+            deps: latest
+          - python-version: "3.11"
+            deps: minimum
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install --upgrade pip
+
+      - name: Install (latest dependencies)
+        if: matrix.deps == 'latest'
+        run: pip install -e ".[dev]"
+
+      - name: Install (dependency floors)
+        if: matrix.deps == 'minimum'
+        run: pip install -e ".[dev]" -c ci/constraints-min.txt
+
+      - name: Record resolved versions
+        run: |
+          python -c "import numpy, scipy, statsmodels; \
+            print('numpy', numpy.__version__); \
+            print('scipy', scipy.__version__); \
+            print('statsmodels', statsmodels.__version__)"
+
+      # The 90% coverage gate lives in pyproject.toml's addopts, not here, so the number is
+      # not duplicated between the config and the workflow.
+      - run: pytest
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: htmlcov-py${{ matrix.python-version }}-${{ matrix.deps }}
+          path: htmlcov/
+          retention-days: 7
+
+  package:
+    name: packaging shape
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      # build and twine are deliberately not in the dev extra: they are needed here and
+      # nowhere else, and the dev extra is the list the implementation plan specifies.
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+
+      # A missing py.typed fails silently and disables type checking for every consumer, so it
+      # is asserted inside the built wheel rather than merely on disk.
+      - name: Assert py.typed ships in the wheel and LICENSE in the sdist
+        run: |
+          python - <<'PY'
+          import glob
+          import tarfile
+          import zipfile
+
+          wheel = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          assert "marginkit/py.typed" in names, f"py.typed missing from {wheel}: {names}"
+
+          sdist = glob.glob("dist/*.tar.gz")[0]
+          members = tarfile.open(sdist).getnames()
+          assert any(n.endswith("/LICENSE") for n in members), f"LICENSE missing from {sdist}"
+
+          print("py.typed present in wheel; LICENSE present in sdist")
+          PY

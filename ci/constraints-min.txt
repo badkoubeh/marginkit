@@ -1,0 +1,20 @@
+# Dependency floors, pinned exactly, for the minimum-versions CI job (plan R9: floors stay
+# loose and are tested at the floor).
+#
+# This file is a SECOND COPY of the floors declared in pyproject.toml's `dependencies`. Per
+# CLAUDE.md, a second copy does not get to be silently wrong: if these three numbers disagree
+# with pyproject.toml, this file is the one that is wrong, and the mismatch is a finding.
+#
+# PYTHON 3.11 ONLY. This set is not installable on 3.12 or 3.13, and that is a property of the
+# published wheels, not a gap to be fixed:
+#   numpy 1.26.0       no cp313 wheel; declares python_requires <3.13
+#   scipy 1.11.1       no cp312 or cp313 wheel; declares python_requires <3.13
+#   statsmodels 0.14.0 no cp313 wheel
+# A newer interpreter only ever resolves to newer dependencies, so testing the floor on 3.11
+# is the whole guarantee. Do not "fix" the CI matrix into a full cross product.
+numpy==1.26.0
+# 1.11.1, not 1.11.0: scipy 1.11.0 is yanked from PyPI for a licence violation. A yanked
+# release installs only when pinned exactly, so pinning it here would test a floor that no
+# consumer resolving `scipy>=1.11.1` can ever land on.
+scipy==1.11.1
+statsmodels==0.14.0

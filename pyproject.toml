@@ -1,0 +1,124 @@
+# marginkit packaging. Packaging is the deliverable (CLAUDE.md hard constraint 6), so this
+# file is load-bearing from the first commit of source rather than something added later.
+
+[build-system]
+# setuptools >= 77 is required, not >= 68: PEP 639's SPDX string form of `license` and the
+# `license-files` key both landed in 77. The older `license = { text = ... }` table form does
+# not satisfy hard constraint 6's "SPDX license field".
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marginkit"
+description = "Robustness margins with confidence intervals, via dose-response threshold estimation."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "marginkit contributors" }]
+dynamic = ["version"]
+
+# PyPI discovery facets. No `License ::` classifier: PEP 639 makes the SPDX `license` field
+# above canonical, and declaring both can conflict.
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Typing :: Typed",
+]
+
+# Exactly the allowlist in CLAUDE.md hard constraint 1, and nothing else. Floors stay loose
+# and are tested at the floor in CI (plan R9) so marginkit never forces a numpy or scipy
+# version onto a consumer's environment. `ci/constraints-min.txt` is the second copy of these
+# three numbers; if the two disagree, that is a finding.
+dependencies = [
+    "numpy>=1.26",
+    # 1.11.1, not 1.11.0: scipy 1.11.0 was yanked from PyPI for a licence violation, so it is
+    # not a floor any consumer can actually resolve to.
+    "scipy>=1.11.1",
+    "statsmodels>=0.14",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "hypothesis>=6.100",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "pre-commit>=3.5",
+    "jsonschema>=4.20",
+]
+
+[project.urls]
+Homepage = "https://github.com/badkoubeh/marginkit"
+Changelog = "https://github.com/badkoubeh/marginkit/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+# The version literal lives in exactly one place: src/marginkit/__init__.py.
+version = { attr = "marginkit.__version__" }
+
+[tool.setuptools.package-data]
+# A missing py.typed fails silently and disables type checking for every consumer, which is
+# why CI asserts it is present inside the built wheel and not merely on disk.
+# `schema/*.json` is added in Phase 3, when the file exists.
+marginkit = ["py.typed"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# The selection is explicit rather than `extend-select` on top of ruff's default, because
+# ruff's default is not stable across versions: ruff 0.16 enables 413 rules by default where
+# ruff 0.5 enabled roughly sixty. `dev` declares `ruff>=0.5` with a loose floor, so relying on
+# the default would let a ruff release change what CI enforces without any change here.
+#
+# E and F are what zeta-bench's configuration effectively selected when it was written. `I` is
+# the one deliberate addition: pre-PR audit 1 is a human eyeballing every import line against
+# the dependency allowlist, and that is only feasible if imports are sorted and grouped.
+select = ["E", "F", "I"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+strict = true
+
+[[tool.mypy.overrides]]
+# Neither statsmodels nor scipy ships a `py.typed` marker, so mypy cannot see their types.
+# (numpy does, and is deliberately absent from this list.) A module-level override keeps the
+# suppression in one declared place instead of spraying `# type: ignore` comments through the
+# source, which pre-PR audit 3 greps for and treats as a finding.
+module = ["statsmodels.*", "scipy.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: coverage simulations and other long-running checks (plan section 6.3)",
+]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--cov=marginkit",
+    "--cov-branch",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "--cov-fail-under=90",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

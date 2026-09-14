@@ -18,9 +18,11 @@
 # Repo tooling that references the above. The CI workflow is the exception: it is
 # committed so GitHub Actions runs (owner decision 2026-09-12, resolving review R4
 # option 1). `.github/*` rather than `.github/` — git cannot re-include a path
-# whose parent directory is excluded.
+# whose parent directory is excluded. CODEOWNERS is committed too, so GitHub can
+# request the code owner's review on every PR.
 .github/*
 !.github/workflows/
+!.github/CODEOWNERS
 
 # Project instructions for Claude Code
 CLAUDE.md

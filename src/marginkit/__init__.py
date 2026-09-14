@@ -1,11 +1,25 @@
 """Robustness-margin estimation: thresholds with confidence intervals.
 
-The public API is specified in ``docs/IMPLEMENTATION_PLAN.md`` sections 4.1 and 4.2 and is
-frozen in Phase 3. It is deliberately absent here: naming a symbol before that phase's owner
-review would front-run the approval its definition of done requires, and every name exported
-from this module is API that two independent consumers depend on.
+marginkit's break-point and censoring **conventions** come from zeta-bench
+(``robustness/cards.py::break_point``). Its dose-response **estimation is new**. See
+``docs/PROVENANCE.md``.
+
+As of ``0.1.0a1`` only the grid break-point rule (:func:`grid_break_point`, returning
+:class:`GridBreakPoint`) and the :class:`Censoring` enum are exported. They were exported ahead
+of the rest of the API so that the first consumer can depend on them. The model fit,
+thresholds, and ratios are not part of this release.
 """
 
-__version__ = "0.1.0.dev0"
+from __future__ import annotations
 
-__all__ = ["__version__"]
+from marginkit.empirical import GridBreakPoint, grid_break_point
+from marginkit.types import Censoring
+
+__version__ = "0.1.0a1"
+
+__all__ = [
+    "Censoring",
+    "GridBreakPoint",
+    "__version__",
+    "grid_break_point",
+]

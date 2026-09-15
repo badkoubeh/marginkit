@@ -68,3 +68,45 @@ def test_marginkit_version_is_a_nonempty_string() -> None:
 
     assert isinstance(marginkit.__version__, str)
     assert marginkit.__version__ != ""
+
+
+# Phase 3 addition (plan section 7 Phase 3 "Tests"): marginkit.report and marginkit.testing are
+# importable submodules, not re-exported from marginkit/__init__.py (plan section 4's layout --
+# `report.py`, `testing.py`). Neither may pull in a dev-only dependency merely by being imported --
+# jsonschema is a dev extra used by marginkit.testing's *own* test suite and by consumers'
+# validators, not by loading the module itself; hypothesis and pytest belong to marginkit's own
+# test suite. A production install of a consumer that only imports these modules must not need
+# any of the three.
+_DEV_ONLY_MODULES: tuple[str, ...] = ("jsonschema", "hypothesis", "pytest")
+
+_REPORT_AND_TESTING_SUBPROCESS_SCRIPT = """
+import sys
+
+import marginkit  # noqa: F401
+import marginkit.report  # noqa: F401
+import marginkit.testing  # noqa: F401
+
+forbidden = {forbidden!r}
+leaked = sorted(name for name in forbidden if name in sys.modules)
+print(",".join(leaked))
+"""
+
+
+def test_importing_report_and_testing_does_not_load_dev_only_modules() -> None:
+    """A fresh-interpreter import of ``marginkit``, ``marginkit.report`` and
+    ``marginkit.testing`` together must never pull in ``jsonschema``, ``hypothesis`` or
+    ``pytest``."""
+    script = _REPORT_AND_TESTING_SUBPROCESS_SCRIPT.format(forbidden=_DEV_ONLY_MODULES)
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, f"subprocess failed to import marginkit: {result.stderr}"
+
+    leaked = [name for name in result.stdout.strip().split(",") if name]
+    assert not leaked, (
+        f"dev-only module(s) leaked into sys.modules on import of marginkit/report/testing: "
+        f"{leaked}"
+    )

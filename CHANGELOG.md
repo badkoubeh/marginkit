@@ -11,10 +11,58 @@ satisfy the public-API change checklist in `docs/IMPLEMENTATION_PLAN.md` Appendi
 
 ## [Unreleased]
 
+## [0.1.0a2] — 2026-09-14
+
+The v1 contract: vocabulary, result objects, the JSON score-card schema, and test fakes, published
+before any estimation exists so that consumers can build against them. To be tagged `v0.1.0a2`
+once the owner has approved the public API surface and this release's PR is merged. Not uploaded
+to PyPI: D3 is still open.
+
+### Added
+
+- Vocabulary in `marginkit`:
+  - `Axis(name, unit, scale, citation)`, with `scale` either `"log"` or `"linear"`.
+  - `Observations.from_counts(...)` and `Observations.from_observations(..., cluster=...)`.
+    `outcome` and `direction` are required. Both forms pool into the same `cells()`.
+  - `Definition.absolute(a)`, `.baseline_fraction(p)` and `.relative(p)`.
+  - `Cell`, plus the `Status` and `IntervalShape` enums. Their values equal their member names,
+    as in `Censoring`.
+- Result objects `Parameter`, `Covariance`, `Fit`, `Threshold` and `Ratio`. These are frozen,
+  keyword-only dataclasses that check their invariants when constructed:
+  - A failed fit carries no parameters, covariance or log-likelihood.
+  - A threshold follows the censoring rules: a censored or failed threshold never carries a
+    point estimate, and its status must agree with its fit's status.
+  - A ratio requires the same axis, unit and definition on both sides. With
+    `dependence="independent"`, it refuses thresholds whose fits share cluster ids.
+- Dependence is recorded in results: `Fit.cluster_ids` holds the fit's cluster ids, and
+  `Threshold.dependence` is required. A stored result therefore shows when independence was
+  assumed.
+- `marginkit.types.JSONValue`, the type of the values allowed in `provenance`.
+- `Scorecard`, and `marginkit.report` with `SCHEMA_VERSION`, `to_dict`, `from_dict` and
+  `load_schema`. The schema is `schema/scorecard-v1.json` (JSON Schema draft 2020-12), shipped in
+  the wheel. `GridBreakPoint` serialises under the same schema and may appear in a `Scorecard`.
+- `marginkit.testing.fake_fit`, `fake_threshold` and `fake_ratio`: schema-valid results for
+  consumers' own tests. Each is labelled as a fake and is not an estimate.
+
+### Notes
+
+- **No estimation yet.** Nothing in this release produces a `Fit`, `Threshold` or `Ratio` except
+  `marginkit.testing`. `fit_dose_response`, `threshold` and `ratio_interval` arrive in later
+  releases.
+- **Schema v1 is binomial-only and strict.** `from_dict` rejects unknown fields rather than
+  dropping them, so reading a stored card needs a marginkit at least as new as the one that wrote
+  it. A new result family or enum value (for example continuous fits or paired ratios) will mean
+  schema version `"2"`.
+- **Binomial results accept only `direction="decreasing"`**, until owner decision D5 defines the
+  increasing case. `Observations` accepts both directions.
+- **A failed or censored `Ratio` carries no shape, estimate or bounds**, until one-sided ratio
+  bounds are specified.
+- `grid_break_point`, the `GridBreakPoint` fields and `Censoring` are unchanged.
+
 ## [0.1.0a1] — 2026-09-13
 
-To be tagged as `v0.1.0a1` on GitHub once this release's PR is merged. Not uploaded to PyPI: package naming and publication (D3) is
-still an open owner decision.
+Tagged `v0.1.0a1` on GitHub at `cdd0410`. Not uploaded to PyPI: package naming and publication
+(D3) is still an open owner decision.
 
 ### Added
 

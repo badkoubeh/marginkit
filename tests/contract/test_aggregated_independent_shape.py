@@ -19,7 +19,33 @@ import inspect
 import json
 from inspect import Parameter
 
+import pytest
+
 from marginkit import Censoring, grid_break_point
+
+
+def _load_matrix_counts() -> dict[str, tuple[list[float], list[int], list[int]]]:
+    """Read ``tests/data/zeta_matrix_counts.csv`` into per-series ``(severity, successes,
+    trials)`` arrays, as ``Observations.from_counts`` needs them (unlike the module-level
+    ``_load_matrix_series`` below, which collapses each row to a rate for the grid rule).
+
+    Imports locally rather than at module level, matching the Phase 3 additions further down:
+    this file's original imports (above) stay untouched, so the diff against the pre-Phase-3
+    file is additions only.
+    """
+    import csv
+    from pathlib import Path
+
+    matrix_csv = Path(__file__).resolve().parents[1] / "data" / "zeta_matrix_counts.csv"
+    series: dict[str, tuple[list[float], list[int], list[int]]] = {}
+    with matrix_csv.open(newline="") as fh:
+        for row in csv.DictReader(fh):
+            name = row["series"]
+            severities, successes, trials = series.setdefault(name, ([], [], []))
+            severities.append(float(row["severity"]))
+            successes.append(int(row["successes"]))
+            trials.append(int(row["trials"]))
+    return series
 
 
 def test_zeta_bench_shaped_call_reads_value_and_max_tested() -> None:
@@ -128,3 +154,238 @@ def test_criterion_is_keyword_only_and_signed_defaults_to_false() -> None:
 
     assert signature.parameters["criterion"].kind is Parameter.KEYWORD_ONLY
     assert signature.parameters["signed"].default is False
+
+
+# ---------------------------------------------------------------------------------------------
+# Phase 3 additions (plan section 7 Phase 3 DoD): the contract types, the JSON report module,
+# and the fakes. Everything below is new; nothing above this line was touched (`git diff` shows
+# additions only). Each new test imports the Phase 3 names it needs locally rather than at
+# module level, for the same reason.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_axis_and_from_counts_construction_on_pid_sensor_noise_counts() -> None:
+    """The plan section 4.1 API sketch's own worked example: ``Axis`` plus
+    ``Observations.from_counts`` on the PID x sensor_noise counts."""
+    from marginkit import Axis, Cell, Observations
+
+    axis = Axis(name="sensor_noise", unit="m", scale="log")
+    obs = Observations.from_counts(
+        axis,
+        severity=[0.0, 0.01, 0.05, 0.1],
+        successes=[200, 299, 122, 0],
+        trials=[200, 300, 300, 300],
+        outcome="success",
+        direction="decreasing",
+    )
+
+    assert obs.cells() == (
+        Cell(severity=0.0, successes=200, trials=200),
+        Cell(severity=0.01, successes=299, trials=300),
+        Cell(severity=0.05, successes=122, trials=300),
+        Cell(severity=0.1, successes=0, trials=300),
+    )
+
+
+def test_definition_absolute_0_95_stores_value() -> None:
+    from marginkit import Definition
+
+    definition = Definition.absolute(0.95)
+
+    assert definition.kind == "absolute"
+    assert definition.value == 0.95
+
+
+def test_scorecard_of_fakes_round_trips_through_json_text() -> None:
+    """The consumer-shaped path: build a ``Scorecard``, serialise it to a JSON string, parse it
+    back, and reload the result objects -- not just ``to_dict``/``from_dict`` in memory."""
+    from marginkit import Scorecard
+    from marginkit.report import from_dict, to_dict
+    from marginkit.testing import fake_fit, fake_ratio, fake_threshold
+
+    card = Scorecard(
+        results=(
+            grid_break_point([0.0, 5.0, 10.0], [1.0, 0.95, 0.4], criterion=0.95),
+            fake_fit(),
+            fake_threshold(),
+            fake_ratio(),
+        ),
+        provenance={},
+    )
+
+    text = json.dumps(to_dict(card))
+    reloaded = from_dict(json.loads(text))
+
+    assert reloaded == card
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=ImportError,
+    reason="Phase 5: fit_dose_response and threshold do not exist until Phases 4-5",
+)
+def test_pid_sensor_noise_absolute_0_95_gives_a_finite_bracketed_interval() -> None:
+    """Worked case from plan section 5.5: the identifiable PID x sensor_noise transition."""
+    from marginkit import Axis, Definition, Observations, fit_dose_response, threshold
+
+    severity, successes, trials = _load_matrix_counts()["pid_sensor_noise"]
+    axis = Axis(name="sensor_noise", unit="m", scale="log")
+    obs = Observations.from_counts(
+        axis,
+        severity=severity,
+        successes=successes,
+        trials=trials,
+        outcome="success",
+        direction="decreasing",
+    )
+    fit = fit_dose_response(obs, model="binomial", link="probit", upper=1.0, lower=0.0)
+    t = threshold(fit, definition=Definition.absolute(0.95), interval_method="profile", level=0.95)
+
+    assert t.censoring is Censoring.NONE
+    assert t.lo is not None
+    assert t.value is not None
+    assert t.hi is not None
+    assert t.lo <= t.value <= t.hi
+    assert 0.01 < t.value < 0.1
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=ImportError,
+    reason="Phase 5: fit_dose_response and threshold do not exist until Phases 4-5",
+)
+def test_pid_wind_absolute_0_95_is_right_censored_at_10() -> None:
+    """Worked case from plan section 5.5: 500/500 at every tested wind level."""
+    from marginkit import Axis, Definition, Observations, fit_dose_response, threshold
+
+    severity, successes, trials = _load_matrix_counts()["pid_wind"]
+    axis = Axis(name="wind", unit="m/s", scale="linear")
+    obs = Observations.from_counts(
+        axis,
+        severity=severity,
+        successes=successes,
+        trials=trials,
+        outcome="success",
+        direction="decreasing",
+    )
+    fit = fit_dose_response(obs, model="binomial", link="probit", upper=1.0, lower=0.0)
+    t = threshold(fit, definition=Definition.absolute(0.95), interval_method="profile", level=0.95)
+
+    assert t.censoring is Censoring.RIGHT
+    assert t.value is None
+    assert t.lo == 10.0
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=ImportError,
+    reason="Phase 5: fit_dose_response and threshold do not exist until Phases 4-5",
+)
+def test_sac_sensor_noise_absolute_0_95_fails_at_baseline() -> None:
+    """Worked case from plan section 5.5: the SAC control is already at 98/200."""
+    from marginkit import Axis, Definition, Observations, Status, fit_dose_response, threshold
+
+    severity, successes, trials = _load_matrix_counts()["sac_sensor_noise"]
+    axis = Axis(name="sensor_noise", unit="m", scale="log")
+    obs = Observations.from_counts(
+        axis,
+        severity=severity,
+        successes=successes,
+        trials=trials,
+        outcome="success",
+        direction="decreasing",
+    )
+    fit = fit_dose_response(obs, model="binomial", link="probit", upper="estimate", lower=0.0)
+    t = threshold(fit, definition=Definition.absolute(0.95), interval_method="profile", level=0.95)
+
+    assert t.status is Status.FAILS_AT_BASELINE
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=ImportError,
+    reason="Phase 5: fit_dose_response and threshold do not exist until Phases 4-5",
+)
+def test_sac_sensor_noise_baseline_fraction_0_5_is_left_censored_at_0_01() -> None:
+    """Worked case from plan section 5.5: the lowest nonzero level already fails."""
+    from marginkit import Axis, Definition, Observations, fit_dose_response, threshold
+
+    severity, successes, trials = _load_matrix_counts()["sac_sensor_noise"]
+    axis = Axis(name="sensor_noise", unit="m", scale="log")
+    obs = Observations.from_counts(
+        axis,
+        severity=severity,
+        successes=successes,
+        trials=trials,
+        outcome="success",
+        direction="decreasing",
+    )
+    fit = fit_dose_response(obs, model="binomial", link="probit", upper="estimate", lower=0.0)
+    t = threshold(
+        fit, definition=Definition.baseline_fraction(0.5), interval_method="profile", level=0.95
+    )
+
+    assert t.censoring is Censoring.LEFT
+    assert t.hi == 0.01
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=ImportError,
+    reason="Phase 6: ratio_interval does not exist until Phase 6",
+)
+def test_fieller_ratio_on_disjoint_pid_sensor_noise_halves_reports_an_interval_shape() -> None:
+    """Two thresholds fit on *disjoint* halves of the PID x sensor_noise counts, on the same
+    axis and the same ``absolute(0.95)`` definition, combined with a Fieller interval.
+
+    ``dependence="independent"`` (plan section 5.6) is valid only when the two thresholds come
+    from disjoint data, and must raise otherwise -- so this must not be two thresholds off one
+    fit, which would share every observation. The two halves below are constructed so that,
+    summed cell by cell, they reproduce the fixture's own ``pid_sensor_noise`` counts
+    (successes ``[200, 299, 122, 0]`` over trials ``[200, 300, 300, 300]``): half A is
+    ``[100, 150, 61, 0]`` over ``[100, 150, 150, 150]`` and half B is the complementary
+    ``[100, 149, 61, 0]`` over ``[100, 150, 150, 150]``, so the two fits genuinely share no
+    observations.
+    """
+    from marginkit import (
+        Axis,
+        Definition,
+        IntervalShape,
+        Observations,
+        fit_dose_response,
+        ratio_interval,
+        threshold,
+    )
+
+    severity, _successes, _trials = _load_matrix_counts()["pid_sensor_noise"]
+    axis = Axis(name="sensor_noise", unit="m", scale="log")
+
+    half_a = Observations.from_counts(
+        axis,
+        severity=severity,
+        successes=[100, 150, 61, 0],
+        trials=[100, 150, 150, 150],
+        outcome="success",
+        direction="decreasing",
+    )
+    half_b = Observations.from_counts(
+        axis,
+        severity=severity,
+        successes=[100, 149, 61, 0],
+        trials=[100, 150, 150, 150],
+        outcome="success",
+        direction="decreasing",
+    )
+
+    fit_a = fit_dose_response(half_a, model="binomial", link="probit", upper=1.0, lower=0.0)
+    fit_b = fit_dose_response(half_b, model="binomial", link="probit", upper=1.0, lower=0.0)
+    t_a = threshold(
+        fit_a, definition=Definition.absolute(0.95), interval_method="profile", level=0.95
+    )
+    t_b = threshold(
+        fit_b, definition=Definition.absolute(0.95), interval_method="profile", level=0.95
+    )
+
+    r = ratio_interval(t_a, t_b, method="fieller", dependence="independent")
+
+    assert isinstance(r.shape, IntervalShape)

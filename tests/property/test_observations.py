@@ -14,10 +14,10 @@ from collections.abc import Callable
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from marginkit.report import from_dict, to_dict
-from marginkit.testing import fake_fit, fake_ratio, fake_threshold
 
 from marginkit import Axis, Censoring, IntervalShape, Observations, Status
+from marginkit.report import from_dict, to_dict
+from marginkit.testing import fake_fit, fake_ratio, fake_threshold
 
 _MAX_EXAMPLES = 100
 _AXIS = Axis(name="noise", unit="m", scale="log")

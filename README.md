@@ -1,10 +1,11 @@
 # marginkit
 Robustness margins with confidence intervals, via dose-response threshold estimation. Model-agnostic — no GPU, no ML framework required
 
-> **Status: alpha, `0.1.0a1`.** This release contains only the grid break-point rule described
-> below. Dose-response fits, thresholds with confidence intervals, and ratios of thresholds are
-> planned for later 0.1 pre-releases and are **not available yet**. The public API may still
-> change before `0.1.0`.
+> **Status: alpha, `0.1.0a2`.** This release contains the grid break-point rule described below,
+> plus the result objects, JSON score-card schema and test fakes that later estimation will
+> return. Dose-response fits, thresholds with confidence intervals, and ratios of thresholds are
+> **not available yet**: nothing produces a `Fit`, `Threshold` or `Ratio` except
+> `marginkit.testing`. The public API may still change before `0.1.0`.
 
 ## What it does today
 
@@ -18,7 +19,7 @@ interpolated, and it has no confidence interval.
 Requires Python 3.11 or later. marginkit is not on PyPI yet, so install it from the release tag:
 
 ```bash
-pip install "marginkit @ git+https://github.com/badkoubeh/marginkit@v0.1.0a1"
+pip install "marginkit @ git+https://github.com/badkoubeh/marginkit@v0.1.0a2"
 ```
 
 Runtime dependencies are `numpy`, `scipy`, and `statsmodels`, with loose minimum versions.
@@ -72,13 +73,40 @@ Some points about the rule:
 - Invalid input raises `ValueError` rather than returning a placeholder. That covers empty or
   mismatched arrays, non-finite values, and negative severities without `signed=True`.
 
-## Results
+## Results and JSON
 
-`GridBreakPoint` is a frozen dataclass: `value`, `max_tested`, `censoring`, `schema_version`
-(currently `"1"`), and `provenance`. `provenance` is an optional mapping you can attach with
-`dataclasses.replace` to record where the inputs came from. marginkit stores it and never
-interprets it. `Censoring` members serialise as their uppercase names, for example `"RIGHT"`.
-`dataclasses.asdict` works today, and versioned JSON helpers are planned.
+Every result is a frozen dataclass carrying a `schema_version` and a `provenance` mapping.
+`provenance` records where the inputs came from; marginkit stores it and never interprets it.
+
+- `GridBreakPoint` is what `grid_break_point` returns today.
+- `Fit`, `Threshold` and `Ratio` are the result types later estimation will return. They check
+  their own consistency when constructed. For example, a failed fit cannot carry parameters, and
+  a censored threshold cannot carry a point estimate.
+
+Results are collected in a `Scorecard` and written to JSON with `marginkit.report`:
+
+```python
+import json
+
+from marginkit import Scorecard, grid_break_point
+from marginkit.report import from_dict, load_schema, to_dict
+
+held = grid_break_point([0.0, 1.0, 2.0], [1.0, 0.99, 0.97], criterion=0.95)
+card = Scorecard(results=(held,), provenance={"run": "example"})
+
+text = json.dumps(to_dict(card), allow_nan=False)
+assert from_dict(json.loads(text)) == card
+assert load_schema()["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+```
+
+The JSON follows `schema/scorecard-v1.json`, a JSON Schema shipped inside the package. Version 1
+covers binary outcomes only, and reading is strict: a card with fields this marginkit does not
+know is rejected, not silently trimmed. To read a stored card, use a marginkit at least as new as
+the one that wrote it.
+
+For your own tests, `marginkit.testing` provides `fake_fit`, `fake_threshold` and `fake_ratio`.
+They return schema-valid results in every status and censoring state, and each is labelled as a
+fake rather than an estimate.
 
 ## Provenance
 

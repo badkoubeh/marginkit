@@ -68,9 +68,9 @@ version = { attr = "marginkit.__version__" }
 
 [tool.setuptools.package-data]
 # A missing py.typed fails silently and disables type checking for every consumer, which is
-# why CI asserts it is present inside the built wheel and not merely on disk.
-# `schema/*.json` is added in Phase 3, when the file exists.
-marginkit = ["py.typed"]
+# why CI asserts it is present inside the built wheel and not merely on disk. The score-card
+# schema is read at runtime by `marginkit.report.load_schema`, so the same check covers it.
+marginkit = ["py.typed", "schema/*.json"]
 
 [tool.ruff]
 line-length = 100

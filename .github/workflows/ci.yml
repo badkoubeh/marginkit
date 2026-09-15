@@ -111,10 +111,14 @@ jobs:
           wheel = glob.glob("dist/*.whl")[0]
           names = zipfile.ZipFile(wheel).namelist()
           assert "marginkit/py.typed" in names, f"py.typed missing from {wheel}: {names}"
+          # load_schema() reads this at runtime; a wheel without it breaks every consumer
+          # that validates a score card, with no error until that call.
+          schema = "marginkit/schema/scorecard-v1.json"
+          assert schema in names, f"{schema} missing from {wheel}: {names}"
 
           sdist = glob.glob("dist/*.tar.gz")[0]
           members = tarfile.open(sdist).getnames()
           assert any(n.endswith("/LICENSE") for n in members), f"LICENSE missing from {sdist}"
 
-          print("py.typed present in wheel; LICENSE present in sdist")
+          print("py.typed and scorecard-v1.json present in wheel; LICENSE present in sdist")
           PY

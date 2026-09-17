@@ -24,15 +24,21 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 import numpy as np
-import statsmodels.api as sm
 from numpy.typing import ArrayLike, NDArray
 from scipy.special import expit, gammaln, xlogy
 from scipy.special import logit as _logit
 from scipy.stats import norm
 from statsmodels.base.model import GenericLikelihoodModel
+from statsmodels.genmod import families
+from statsmodels.genmod.generalized_linear_model import GLM
 from statsmodels.tools.sm_exceptions import ConvergenceWarning, PerfectSeparationWarning
+from statsmodels.tools.tools import add_constant
 
 from marginkit.types import Axis, Cell, JSONValue, Observations, Status, _check_finite_number
+
+# Narrow statsmodels imports above, never `statsmodels.api`: that module also imports graphics and
+# tsa, and statsmodels 0.14.0's tsa fails to import against current pandas
+# (`deprecate_kwarg() missing 'new_arg_name'`), which breaks the dependency-floor CI job.
 
 __all__ = ["Covariance", "Fit", "Parameter", "Prediction", "fit_dose_response"]
 
@@ -57,9 +63,9 @@ _POSITIVE_DEFINITE_RELATIVE_TOLERANCE = 1e-12
 
 _VALID_UPPER_LOWER = "estimate"
 _STATSMODELS_LINKS = {
-    "probit": sm.families.links.Probit(),
-    "logit": sm.families.links.Logit(),
-    "cloglog": sm.families.links.CLogLog(),
+    "probit": families.links.Probit(),
+    "logit": families.links.Logit(),
+    "cloglog": families.links.CLogLog(),
 }
 # decisions/0005: an estimated asymptote's logit-scale parameter (a for lower, b for upper)
 # beyond this magnitude, or the asymptote itself within this distance of a probability
@@ -1101,13 +1107,13 @@ def _pilot_start(
         rescaled_failure_rate = np.clip(
             (upper_start - rate[nonzero]) / (upper_start - lower_start), eps, 1.0 - eps
         )
-        exog = sm.add_constant(transformed_scaled)
+        exog = add_constant(transformed_scaled)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=PerfectSeparationWarning)
-            pilot = sm.GLM(
+            pilot = GLM(
                 rescaled_failure_rate,
                 exog,
-                family=sm.families.Binomial(link=_STATSMODELS_LINKS[link]),
+                family=families.Binomial(link=_STATSMODELS_LINKS[link]),
                 var_weights=trials[nonzero],
             ).fit()
         beta0 = float(pilot.params[0])
@@ -1279,17 +1285,35 @@ def _fit_generic(
                     tol=1e-10,
                 )
         except np.linalg.LinAlgError:
+            # A singular Hessian during the Newton polish is usually the symptom of an estimated
+            # asymptote drifting to its boundary (decisions/0005); name that cause when the BFGS
+            # stage already shows it, so the reason does not depend on which platform's linear
+            # algebra happens to fail first.
+            bfgs_params = np.asarray(bfgs_result.params, dtype=np.float64)
+            _, _, bfgs_lower, bfgs_upper = _unpack_optimizer_params(
+                bfgs_params,
+                estimate_lower=lower_is_estimate,
+                estimate_upper=upper_is_estimate,
+                lower_value=lower_value,
+                upper_value=upper_value,
+            )
+            singular_reason = _boundary_warning(
+                bfgs_params,
+                estimate_lower=lower_is_estimate,
+                estimate_upper=upper_is_estimate,
+                lower=bfgs_lower,
+                upper=bfgs_upper,
+            ) or (
+                "fit_dose_response: the optimizer's Hessian was singular while fitting -- "
+                "no interior maximum was found"
+            )
             return _status_only_fit(
                 obs,
                 cells=cells,
                 cluster_ids=cluster_ids,
                 link=link,
                 status=Status.NOT_CONVERGED,
-                fit_warnings=_failure_warnings(
-                    "fit_dose_response: the optimizer's Hessian was singular while fitting -- "
-                    "no interior maximum was found",
-                    pilot_wrong_sign=pilot_wrong_sign,
-                ),
+                fit_warnings=_failure_warnings(singular_reason, pilot_wrong_sign=pilot_wrong_sign),
             )
     convergence_warned = any(issubclass(w.category, ConvergenceWarning) for w in caught)
     converged_flag = bool(result.mle_retvals.get("converged", False))
@@ -1498,11 +1522,11 @@ def _fit_glm(
     # a fit must not depend on the caller's choice of severity units). An exact
     # reparametrisation of the identical model -- see _centering_and_scale.
     center, spread = _centering_and_scale(severity, scale=axis.scale)
-    exog = sm.add_constant((_transform(severity, scale=axis.scale) - center) / spread)
+    exog = add_constant((_transform(severity, scale=axis.scale) - center) / spread)
     endog = failures / trials
 
-    model = sm.GLM(
-        endog, exog, family=sm.families.Binomial(link=_STATSMODELS_LINKS[link]), var_weights=trials
+    model = GLM(
+        endog, exog, family=families.Binomial(link=_STATSMODELS_LINKS[link]), var_weights=trials
     )
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")

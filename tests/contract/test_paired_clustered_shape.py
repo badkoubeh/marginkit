@@ -9,8 +9,13 @@ A failing **live** test in this file means a breaking change to the public API m
 depends on (plan section 3.3, ``docs/CONSUMERS.md``). **Do not edit a live test to make it
 pass.** Stop and ask; that failure is the signal a breaking change needs owner sign-off. The two
 ``xfail`` tests below are different: they exercise API that does not exist yet (``threshold()``
-until Phase 5, ``dependence="paired"`` until v0.2 Phase 9) and are expected to fail with
-``ImportError`` until then.
+until Phase 5, ``dependence="paired"`` until v0.2 Phase 9). The first now fails with
+``TypeError``, not ``ImportError``: since Phase 4 added ``fit_dose_response``,
+``from marginkit import threshold`` no longer errors on import -- it binds the
+``marginkit.threshold`` submodule (imported as a side effect of ``marginkit/__init__.py``),
+which is not callable, so the ``TypeError`` comes from calling it. The second still imports
+``ratio_interval``, which genuinely does not exist as any attribute, so it still fails with
+``ImportError``.
 """
 
 from __future__ import annotations
@@ -81,9 +86,12 @@ def test_clustered_observations_cells_totals_match_the_per_level_schedule() -> N
 
 @pytest.mark.xfail(
     strict=True,
-    raises=ImportError,
-    reason="Phase 5: threshold() does not exist until Phase 5, and R2's dependence guard is "
-    "not implemented until then either",
+    raises=(ImportError, TypeError),
+    reason="Phase 5: threshold() does not exist yet, and R2's dependence guard is not "
+    "implemented until then either -- `from marginkit import threshold` binds the "
+    "marginkit.threshold submodule (imported as a side effect of marginkit/__init__.py), not "
+    "a callable, until Phase 5 exports the function, so calling it raises TypeError rather "
+    "than the import raising ImportError",
 )
 def test_threshold_on_clustered_input_without_independent_dependence_raises() -> None:
     """R2: a method that assumes independence must refuse clustered input outright."""

@@ -262,13 +262,19 @@ class TestFinney71Logit:
 class TestGlmPathMatchesLikelihoodPathNearBoundary:
     """decisions/0007's path-consistency lock-in: a ``u=1, l=0`` fit (the GLM special case,
     decisions/0004) and the same data fit with ``upper``/``lower`` pinned a hair inside
-    ``(0, 1)`` (``upper=1-1e-12, lower=1e-12`` -- not exactly ``1.0``/``0.0``, so this takes
+    ``(0, 1)`` (``upper=1-1e-7, lower=1e-7`` -- not exactly ``1.0``/``0.0``, so this takes
     the ``GenericLikelihoodModel`` path, and pinned close enough to the boundary that the two
     curves are, for this purpose, the same curve) should report the same ``(mu, s)``
     covariance, since both sides are marginkit's own computation of the same quantity. Held at
     the full ``1e-4`` relative (decisions/0007's amendment), not a looser path-consistency
     allowance: this checks internal agreement, not parity against drc, so there is no excuse
     for a wider tolerance. Do not widen this if it fails; report the actual gap instead.
+
+    Why ``1e-7`` and not closer: at ``1e-12`` the likelihood's ``log(1 - P)`` terms lose about
+    ``1e-4`` relative precision, so Newton's ``1e-10`` step tolerance sits inside float noise and
+    convergence became CPU-dependent (one CI runner reported ``NOT_CONVERGED`` on code that
+    passed elsewhere). Measured on macOS and on Linux at the dependency floor, ``1e-7`` gives
+    path agreement of about ``1e-6`` -- 100x inside the tolerance -- with no such sensitivity.
     """
 
     def test_covariance_matches_between_the_two_fitting_paths(self) -> None:
@@ -276,7 +282,7 @@ class TestGlmPathMatchesLikelihoodPathNearBoundary:
 
         fit_glm_path = fit_dose_response(obs, model="binomial", link="probit", upper=1.0, lower=0.0)
         fit_likelihood_path = fit_dose_response(
-            obs, model="binomial", link="probit", upper=1.0 - 1e-12, lower=1e-12
+            obs, model="binomial", link="probit", upper=1.0 - 1e-7, lower=1e-7
         )
 
         assert fit_glm_path.status is Status.OK

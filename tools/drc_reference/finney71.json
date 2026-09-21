@@ -1,0 +1,180 @@
+{
+  "versions": {
+    "r_version": "R version 4.6.1 (2026-06-24)",
+    "drc_version": "3.0.1",
+    "mass_version": "7.3.65",
+    "jsonlite_version": "2.0.0",
+    "generated_at": "2026-09-17 01:21:26 UTC"
+  },
+  "dataset": {
+    "dose": [10.2, 7.7, 5.1, 3.8, 2.6, 0],
+    "total": [50, 49, 46, 48, 50, 49],
+    "affected": [44, 42, 24, 16, 6, 0],
+    "note": "str(finney71): dose (num), total (int), affected (int); includes an exact dose=0 all-success control row (0/49)."
+  },
+  "mapping": {
+    "response_fit": "affected/total (failure, increasing with dose)",
+    "LN2": {
+      "mu": "log(e)",
+      "s": "1/b",
+      "note": "b is positive on finney71 (approx +1.83)"
+    },
+    "LL2": {
+      "mu": "log(e)",
+      "s": "-1/b",
+      "note": "b is negative on finney71 (approx -3.10)"
+    },
+    "upper_fixed": 1,
+    "lower_fixed": 0
+  },
+  "loglik_parity": {
+    "drc_LN2_full_dataset": -10.4796827596195,
+    "glm_probit_dose_gt_0_subset": -10.4796826974705,
+    "manual_full_binomial_loglik_on_drc_LN2_fitted_values": -10.4796827595705,
+    "note": "drc's logLik() is the FULL binomial log-likelihood, including the binomial coefficient (confirmed by matching a manual lchoose-based computation on drc's own fitted values). Dropping the all-success dose=0 control row from the GLM likelihood (marginkit section 5.1's rule for the fixed u=1,l=0 path) changes the log-likelihood by exactly 0, because an n_successes=0-failure row's binomial log-likelihood term (lchoose(n,0) + n*log(1)) is identically 0 -- this is a mathematical identity, not a coincidence of this dataset."
+  },
+  "drc": {
+    "LN2": {
+      "fct": "LN.2",
+      "link": "probit",
+      "coef": {
+        "b:(Intercept)": 1.82969666359979,
+        "e:(Intercept)": 4.84550166109113
+      },
+      "vcov": {
+        "row_names": ["b:(Intercept)", "e:(Intercept)"],
+        "col_names": ["b:(Intercept)", "e:(Intercept)"],
+        "values": [
+          [0.043148193950848, 0.00543247519990963],
+          [0.00543247519990963, 0.0607817568887864]
+        ]
+      },
+      "observed_hessian_check": {
+        "vcov": {
+          "row_names": ["b:(Intercept)", "e:(Intercept)"],
+          "col_names": ["b:(Intercept)", "e:(Intercept)"],
+          "values": [
+            [0.0431481926316091, 0.00543245474291947],
+            [0.00543245474291947, 0.0607818192236428]
+          ]
+        },
+        "max_abs_relative_difference_from_drc_vcov": 3.76568496139925e-06,
+        "note": "An independent numerical Hessian of the full binomial negative log-likelihood (base R's optimHess(), not drc's internal optimizer), evaluated at drc's own coefficients and inverted. Confirms drc's vcov is the OBSERVED information (matches this independent computation to within 1e-5 relative on finney71), not merely close to it by coincidence -- decisions/0007's basis for using drc's vcov, not glm's expected-information cov_params(), as the covariance parity reference."
+      },
+      "logLik": -10.4796827596195,
+      "ED_delta": {
+        "p": [10, 50, 90],
+        "table": {
+          "row_names": ["e:1:10", "e:1:50", "e:1:90"],
+          "col_names": ["Estimate", "Std. Error", "Lower", "Upper"],
+          "values": [
+            [2.40520053001527, 0.237738822595545, 1.93924100000105, 2.8711600600295],
+            [4.84550166109113, 0.246539564550574, 4.36229299380781, 5.32871032837444],
+            [9.76171676940707, 0.876021447047052, 8.04474628351018, 11.478687255304]
+          ]
+        }
+      }
+    },
+    "LL2": {
+      "fct": "LL.2",
+      "link": "logit",
+      "coef": {
+        "b:(Intercept)": -3.1036322245264,
+        "e:(Intercept)": 4.8288966132599
+      },
+      "vcov": {
+        "row_names": ["b:(Intercept)", "e:(Intercept)"],
+        "col_names": ["b:(Intercept)", "e:(Intercept)"],
+        "values": [
+          [0.150331038778693, -0.00736470119950872],
+          [-0.00736470119950873, 0.0622878449214898]
+        ]
+      },
+      "observed_hessian_check": {
+        "vcov": {
+          "row_names": ["b:(Intercept)", "e:(Intercept)"],
+          "col_names": ["b:(Intercept)", "e:(Intercept)"],
+          "values": [
+            [0.150331164237597, -0.00736467304121243],
+            [-0.00736467304121243, 0.0622879039003233]
+          ]
+        },
+        "max_abs_relative_difference_from_drc_vcov": 3.82341326958736e-06,
+        "note": "An independent numerical Hessian of the full binomial negative log-likelihood (base R's optimHess(), not drc's internal optimizer), evaluated at drc's own coefficients and inverted. Confirms drc's vcov is the OBSERVED information (matches this independent computation to within 1e-5 relative on finney71), not merely close to it by coincidence -- decisions/0007's basis for using drc's vcov, not glm's expected-information cov_params(), as the covariance parity reference."
+      },
+      "logLik": -10.3222267225292,
+      "ED_delta": {
+        "p": [10, 50, 90],
+        "table": {
+          "row_names": ["e:1:10", "e:1:50", "e:1:90"],
+          "col_names": ["Estimate", "Std. Error", "Lower", "Upper"],
+          "values": [
+            [2.37896465253322, 0.251641868099807, 1.88575565405522, 2.87217365101123],
+            [4.8288966132599, 0.249575329152322, 4.33973795669162, 5.31805526982818],
+            [9.80184488101689, 0.97020466435946, 7.90027868123958, 11.7034110807942]
+          ]
+        }
+      }
+    }
+  },
+  "glm": {
+    "probit": {
+      "link": "probit",
+      "coef": {
+        "(Intercept)": -2.8874632794217,
+        "log(dose)": 1.82976811858176
+      },
+      "vcov": {
+        "row_names": ["(Intercept)", "log(dose)"],
+        "col_names": ["(Intercept)", "log(dose)"],
+        "values": [
+          [0.12322893324136, -0.0706738072095374],
+          [-0.0706738072095374, 0.0435578801440141]
+        ]
+      },
+      "logLik": -10.4796826974705,
+      "converged": true
+    },
+    "logit": {
+      "link": "logit",
+      "coef": {
+        "(Intercept)": -4.88691227599941,
+        "log(dose)": 3.10354547924361
+      },
+      "vcov": {
+        "row_names": ["(Intercept)", "log(dose)"],
+        "col_names": ["(Intercept)", "log(dose)"],
+        "values": [
+          [0.413355408378773, -0.241437802509494],
+          [-0.241437802509494, 0.150325115320513]
+        ]
+      },
+      "logLik": -10.3222266921692,
+      "converged": true
+    },
+    "cloglog": {
+      "link": "cloglog",
+      "coef": {
+        "(Intercept)": -3.52493520772131,
+        "log(dose)": 1.93268826243494
+      },
+      "vcov": {
+        "row_names": ["(Intercept)", "log(dose)"],
+        "col_names": ["(Intercept)", "log(dose)"],
+        "values": [
+          [0.186305576320636, -0.0962846618000771],
+          [-0.0962846618000771, 0.0524588965581688]
+        ]
+      },
+      "logLik": -11.7735546092448,
+      "converged": true
+    }
+  },
+  "mass_dose_p": {
+    "p": 0.5,
+    "link": "probit",
+    "dose": 1.57804874295206,
+    "se": 0.0508143260320316,
+    "note": "MASS::dose.p reports its result on the *covariate's own scale*. Because the glm formula used log(dose) as the covariate, dose.p's 'Dose' output is actually on the log(dose) scale already -- it is mu directly (== -b0/b1), NOT exp(mu). This is a definitional fact about dose.p's implementation (it applies no inverse transform for a transformed covariate), not a marginkit convention, and is why this value is compared to mu, never to exp(mu) or to drc's e."
+  }
+}

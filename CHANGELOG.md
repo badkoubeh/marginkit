@@ -11,6 +11,42 @@ satisfy the public-API change checklist in `docs/IMPLEMENTATION_PLAN.md` Appendi
 
 ## [Unreleased]
 
+Phase 4: dose-response fitting. Additive; upgrading from 0.1.0a2 needs no consumer change.
+
+### Added
+- `fit_dose_response(obs, *, model, link, upper, lower) -> Fit`. All four keywords are required,
+  with no defaults: `model="binomial"`; `link` one of `"probit"`, `"logit"`, `"cloglog"`;
+  `upper`/`lower` a float or `"estimate"`. Asymptotes fixed at 1 and 0 fit with statsmodels
+  `GLM`; anything else with `GenericLikelihoodModel` (`decisions/0004`). A failed fit returns a
+  `Fit` whose `status` says so (`SEPARATION`, `NOT_CONVERGED`, `CONTROL_INCOMPATIBLE`), with
+  `params`, `covariance` and `log_likelihood` set to `None` and the reason in `warnings`.
+  `direction="increasing"` raises `ValueError`. `Fit.cluster_ids` is copied from `obs`.
+- `Fit.predict(severity, *, level=0.95) -> Prediction`, with pointwise delta-method bands.
+  Raises `ValueError` unless `status` is `OK`.
+- `Prediction`: frozen, keyword-only, compared by identity (`eq=False`); read-only numpy array
+  fields `severity`, `estimate`, `lo`, `hi` and a float `level`. Not serialisable:
+  `report.to_dict` and `Scorecard` reject it.
+- R `drc`/`MASS` reference fixtures and their generator in `tools/drc_reference/`.
+- Decisions `0005` (no interior maximum → `NOT_CONVERGED`), `0006` (separation from the exact
+  overlap check, amending plan §5.2) and `0007` (observed-information covariance).
+
+### Changed
+- `Covariance` positive-definiteness is now checked on the correlation matrix: every variance
+  `> 0` and minimum correlation eigenvalue `> 1e-12`, replacing minimum eigenvalue
+  `> 1e-12·max(1, max|entry|)`. A fit's status no longer depends on severity units. This only
+  loosens the rule: every matrix 0.1.0a2 accepted is still accepted. Stored cards: a `Fit`
+  written by this version may be rejected by a 0.1.0a2 reader; read cards with a marginkit at
+  least as new as the writer.
+
+### Unchanged
+- JSON schema v1 and every existing field and signature.
+
+### Notice (takes effect with Phase 5)
+- Exporting `threshold()` will make the attribute `marginkit.threshold` the function, not the
+  module. `import marginkit.threshold as m; m.Threshold` will stop working. Use
+  `from marginkit import Threshold`; `from marginkit.threshold import Threshold` keeps working
+  but is not API.
+
 ## [0.1.0a2] — 2026-09-14
 
 The v1 contract: vocabulary, result objects, the JSON score-card schema, and test fakes, published

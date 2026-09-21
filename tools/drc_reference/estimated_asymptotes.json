@@ -1,0 +1,127 @@
+{
+  "versions": {
+    "r_version": "R version 4.6.1 (2026-06-24)",
+    "drc_version": "3.0.1",
+    "mass_version": "7.3.65",
+    "jsonlite_version": "2.0.0",
+    "generated_at": "2026-09-17 01:21:26 UTC"
+  },
+  "simulation": {
+    "seed": 20260916,
+    "true_params": {
+      "mu": 0,
+      "s": 0.5,
+      "upper": 0.9,
+      "lower": 0.1
+    },
+    "link": "probit",
+    "n_per_level": 400,
+    "severity": [0, 0.1, 0.166810053720006, 0.278255940220712, 0.464158883361278, 0.774263682681127, 1.29154966501488, 2.15443469003188, 3.59381366380463, 5.99484250318941, 10],
+    "successes": [365, 356, 367, 350, 336, 255, 137, 60, 35, 33, 37],
+    "trials": [400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400],
+    "note": "10 log-spaced severities from 0.1 to 10 (10^seq(-1,1,length.out=10)) plus an exact severity=0 control, n=400 per level, simulated once with R's Mersenne Twister under the seed above. Embedded here so no test needs to re-run R or re-derive this dataset; a Python test rebuilds the same Observations from these arrays directly."
+  },
+  "mapping": {
+    "response_fit": "successes/trials (success, decreasing with severity)",
+    "LN3": {
+      "mu": "log(e)",
+      "s": "-1/b",
+      "lower": "0.0 (fixed by drc's LN.3)",
+      "upper": "d (estimated)"
+    },
+    "LN4": {
+      "mu": "log(e)",
+      "s": "-1/b",
+      "lower": "c (estimated)",
+      "upper": "d (estimated)"
+    },
+    "formula_check": "P_success(x) = u - (u-l)*Phi((log(x)-mu)/s), u=d, l=c -- confirmed to reproduce predict() exactly at 5 held-out severities for both LN.3 and LN.4"
+  },
+  "drc": {
+    "LN3": {
+      "fct": "LN.3",
+      "default": {
+        "coef": {
+          "b:(Intercept)": -0.924316595502433,
+          "d:(Intercept)": 0.928397205248798,
+          "e:(Intercept)": 1.1806966088218
+        },
+        "vcov": {
+          "row_names": ["b:(Intercept)", "d:(Intercept)", "e:(Intercept)"],
+          "col_names": ["b:(Intercept)", "d:(Intercept)", "e:(Intercept)"],
+          "values": [
+            [0.000960004777852091, 9.81471472604211e-05, -0.000472980697381042],
+            [9.81471472604211e-05, 6.57896649983215e-05, -0.000176298427569413],
+            [-0.000472980697381042, -0.000176298427569413, 0.0019087029967183]
+          ]
+        },
+        "logLik": -102.05570350478,
+        "control": "drmc() defaults (relTol=1e-7, maxIt=500)"
+      },
+      "tight": {
+        "coef": {
+          "b:(Intercept)": -0.924320844326212,
+          "d:(Intercept)": 0.928393832081004,
+          "e:(Intercept)": 1.18075696767714
+        },
+        "vcov": {
+          "row_names": ["b:(Intercept)", "d:(Intercept)", "e:(Intercept)"],
+          "col_names": ["b:(Intercept)", "d:(Intercept)", "e:(Intercept)"],
+          "values": [
+            [0.000960014284329591, 9.81463224116905e-05, -0.000472967667278073],
+            [9.81463224116906e-05, 6.5791772685005e-05, -0.00017631676921504],
+            [-0.000472967667278073, -0.00017631676921504, 0.00190898455073491]
+          ]
+        },
+        "logLik": -102.055702688887,
+        "control": "start=coef(default), drmc(relTol=1e-14, maxIt=10000, method='BFGS')"
+      },
+      "convergence_note": "drm()'s default control (drmc(): relTol=1e-7, maxIt=500) leaves this fit under-converged -- marginkit's GenericLikelihoodModel path (bfgs then a newton polish, run to a much tighter tolerance) reaches a strictly higher log-likelihood than the 'default' block below. Refitting from the default fit's own coefficients with control=drmc(relTol=1e-14, maxIt=10000, method='BFGS') (the 'tight' block) closes almost all of that gap and is what the Python parity tests compare against; 'default' is kept only for the record. This is why TestEstimatedAsymptoteParity in tests/reference/test_models_drc.py compares logLik with marginkit_logLik >= tight_logLik - 1e-6 rather than the usual two-sided 1e-4 relative bound, and why mu uses an absolute tolerance (its true value is 0, where a relative tolerance is ill-posed) while s/upper/lower use a looser 1e-3 relative tolerance -- the tight refit is itself only converged to about that precision, not to plan section 6.1's usual 1e-4."
+    },
+    "LN4": {
+      "fct": "LN.4",
+      "default": {
+        "coef": {
+          "b:(Intercept)": -1.82808217970261,
+          "c:(Intercept)": 0.0851065855812341,
+          "d:(Intercept)": 0.902006026197459,
+          "e:(Intercept)": 0.993326986792022
+        },
+        "vcov": {
+          "row_names": ["b:(Intercept)", "c:(Intercept)", "d:(Intercept)", "e:(Intercept)"],
+          "col_names": ["b:(Intercept)", "c:(Intercept)", "d:(Intercept)", "e:(Intercept)"],
+          "values": [
+            [0.0173054654761927, -0.000415077902343382, 0.000369495801275169, -0.000105254018611346],
+            [-0.000415077902343382, 7.23303374758896e-05, -4.98002876447944e-06, -8.88198880200352e-05],
+            [0.000369495801275168, -4.98002876447941e-06, 6.15648158956252e-05, -7.97855176188329e-05],
+            [-0.000105254018611343, -8.88198880200353e-05, -7.97855176188328e-05, 0.000984511528675888]
+          ]
+        },
+        "logLik": -33.1073857672866,
+        "control": "drmc() defaults (relTol=1e-7, maxIt=500)"
+      },
+      "tight": {
+        "coef": {
+          "b:(Intercept)": -1.82776969895334,
+          "c:(Intercept)": 0.0851123960514359,
+          "d:(Intercept)": 0.902028172310838,
+          "e:(Intercept)": 0.993270893329415
+        },
+        "vcov": {
+          "row_names": ["b:(Intercept)", "c:(Intercept)", "d:(Intercept)", "e:(Intercept)"],
+          "col_names": ["b:(Intercept)", "c:(Intercept)", "d:(Intercept)", "e:(Intercept)"],
+          "values": [
+            [0.017293444329839, -0.000414901473893384, 0.000369337792848445, -0.000105461649125473],
+            [-0.000414901473893384, 7.23407850783734e-05, -4.97901986852181e-06, -8.88269765384735e-05],
+            [0.000369337792848445, -4.97901986852181e-06, 6.15505953389885e-05, -7.9775853156381e-05],
+            [-0.000105461649125473, -8.88269765384735e-05, -7.9775853156381e-05, 0.00098448256391565]
+          ]
+        },
+        "logLik": -33.1073787622445,
+        "control": "start=coef(default), drmc(relTol=1e-14, maxIt=10000, method='BFGS')"
+      },
+      "convergence_note": "drm()'s default control (drmc(): relTol=1e-7, maxIt=500) leaves this fit under-converged -- marginkit's GenericLikelihoodModel path (bfgs then a newton polish, run to a much tighter tolerance) reaches a strictly higher log-likelihood than the 'default' block below. Refitting from the default fit's own coefficients with control=drmc(relTol=1e-14, maxIt=10000, method='BFGS') (the 'tight' block) closes almost all of that gap and is what the Python parity tests compare against; 'default' is kept only for the record. This is why TestEstimatedAsymptoteParity in tests/reference/test_models_drc.py compares logLik with marginkit_logLik >= tight_logLik - 1e-6 rather than the usual two-sided 1e-4 relative bound, and why mu uses an absolute tolerance (its true value is 0, where a relative tolerance is ill-posed) while s/upper/lower use a looser 1e-3 relative tolerance -- the tight refit is itself only converged to about that precision, not to plan section 6.1's usual 1e-4."
+    }
+  },
+  "feasibility_note": "drc fit both binomial LN.3 and LN.4 successfully, including the exact severity=0 control row, with no special handling required beyond the standard drm() call: no epsilon substitution, no dropped row, no convergence failure. Nothing to report as infeasible."
+}

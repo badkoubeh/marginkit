@@ -21,7 +21,10 @@ from __future__ import annotations
 import dataclasses
 from typing import Any, cast
 
+import numpy as np
 import pytest
+from hypothesis import assume, given, settings
+from hypothesis import strategies as st
 
 from marginkit import (
     Axis,
@@ -269,8 +272,13 @@ class TestCovariance:
             Covariance(names=("mu", "s"), matrix=((1.0, 0.5), (0.2, 1.0)))
 
     def test_non_positive_semi_definite_matrix_raises_value_error(self) -> None:
-        """Rule 8: minimum eigenvalue must be >= -1e-12 * max(1, max |entry|). This matrix's
-        eigenvalues are exactly -1 and 1, far below that tolerance."""
+        """Rule 8 (current rule, post units-independence fix -- see the
+        "units-independence fix" section below, in particular
+        ``TestCovarianceStillRejects``, for the rule's own dedicated coverage): every diagonal
+        entry must be positive, and the correlation matrix ``D^-1/2 . matrix . D^-1/2`` must
+        have minimum eigenvalue ``> 1e-12``. This matrix's first diagonal entry is ``-1.0``,
+        which alone fails the rule (its eigenvalues, exactly -1 and 1, would fail under the
+        old raw-eigenvalue rule too, but the diagonal check now rejects it first)."""
         with pytest.raises(ValueError):
             Covariance(names=("mu", "s"), matrix=((-1.0, 0.0), (0.0, 1.0)))
 
@@ -279,6 +287,194 @@ class TestCovariance:
 
         with pytest.raises(dataclasses.FrozenInstanceError):
             cast(Any, covariance).names = ("s",)
+
+
+# ------------------------------------------------------------------------------------------
+# The units-independence fix to Covariance's positive-definiteness rule (Phase 4 stats
+# re-check): the old rule (min eig(matrix) > 1e-12 * max(1, max|entry|)) made an
+# estimated-asymptote fit's status depend on the caller's severity units, because it mixes
+# severity-scale parameters (mu, s) with probabilities (upper, lower) on the *raw* eigenvalue
+# scale. The new rule (`models._is_positive_definite`) tests the correlation matrix
+# ``D^-1/2 . matrix . D^-1/2`` instead: every diagonal entry positive, and the correlation
+# matrix's minimum eigenvalue > 1e-12. This section is that rule's own dedicated coverage,
+# independent of any particular Fit or fitting path.
+# ------------------------------------------------------------------------------------------
+
+
+def _old_rule_accepts(matrix: np.ndarray) -> bool:
+    """The ``0.1.0a2`` positive-definiteness rule, before the units-independence fix,
+    reimplemented here independently (not imported from ``marginkit.models``) as the oracle
+    for ``TestCovarianceNewRuleAcceptsSupersetOfOldRule`` below: ``min eig(matrix) > 1e-12 *
+    max(1, max|entry|)``, on the raw (non-correlation) matrix.
+    """
+    max_abs = float(np.max(np.abs(matrix)))
+    tolerance = 1e-12 * max(1.0, max_abs)
+    min_eigenvalue = float(np.min(np.linalg.eigvalsh(matrix)))
+    return min_eigenvalue > tolerance
+
+
+def _new_rule_accepts(matrix: np.ndarray) -> bool:
+    """Whether the *current*, public rule accepts ``matrix``, decided the only way a test is
+    allowed to decide it: by actually constructing a :class:`~marginkit.Covariance` and seeing
+    whether it raises. This never reimplements or imports ``models._is_positive_definite``
+    itself, so the property test below exercises the real public behaviour, not a second copy
+    of it.
+    """
+    n = matrix.shape[0]
+    names = tuple(f"p{i}" for i in range(n))
+    try:
+        Covariance(names=names, matrix=tuple(tuple(row) for row in matrix))
+    except ValueError:
+        return False
+    return True
+
+
+class TestCovarianceMixedScaleAcceptance:
+    """A well-conditioned matrix that mixes very large and very small variances -- exactly the
+    shape a natural-scale ``(mu, s, upper, lower)`` covariance has when severity is measured in
+    very large or very small units -- is accepted, and so is a uniformly tiny-scale one that
+    the old raw-eigenvalue rule would have rejected outright.
+    """
+
+    def test_mixed_scale_with_modest_correlation_is_accepted(self) -> None:
+        # diag(1e12, 1e12, 1e-5, 1e-5) with a modest (0.3) correlation between every pair,
+        # built from the correlation matrix directly so the off-diagonal entries are exactly
+        # what a 0.3 correlation implies at these scales, not hand-computed by hand.
+        diagonal = np.array([1e12, 1e12, 1e-5, 1e-5])
+        correlation = 0.3 * np.ones((4, 4)) + 0.7 * np.eye(4)
+        scale = np.sqrt(diagonal)
+        matrix = correlation * np.outer(scale, scale)
+        matrix = (matrix + matrix.T) / 2.0
+
+        covariance = Covariance(
+            names=("mu", "s", "upper", "lower"), matrix=tuple(tuple(row) for row in matrix)
+        )
+
+        assert covariance.matrix[0][0] == pytest.approx(1e12)
+        assert covariance.matrix[2][2] == pytest.approx(1e-5)
+
+    def test_uniformly_tiny_scale_identity_is_accepted(self) -> None:
+        # 1e-14 * I: the old rule's tolerance was 1e-12 * max(1, max|entry|) = 1e-12 here
+        # (since max|entry| = 1e-14 < 1), and the matrix's own eigenvalue is 1e-14 < 1e-12 --
+        # the old rule would have rejected this outright. The new rule normalises to the
+        # correlation matrix first, which is exactly the identity regardless of the common
+        # scale factor, so it is accepted.
+        matrix = 1e-14 * np.eye(3)
+
+        covariance = Covariance(
+            names=("mu", "s", "upper"), matrix=tuple(tuple(row) for row in matrix)
+        )
+
+        assert covariance.matrix[0][0] == pytest.approx(1e-14)
+
+
+class TestCovarianceNewRuleAcceptsSupersetOfOldRule:
+    """Property: any finite matrix the *old* rule accepted, the *new* rule still accepts.
+
+    Matrices are built as ``A . A^T + eps*I`` (guaranteed positive semi-definite, nudged
+    strictly positive-definite by ``eps*I``) and then rescaled per-parameter by a random
+    power-of-ten diagonal congruence (``D . (A.A^T + eps*I) . D``, which preserves
+    positive-definiteness exactly), so examples genuinely span the mixed-scale designs the fix
+    targets, not just uniformly-scaled ones.
+
+    The congruence transform is exactly symmetric, but a real ``Fit``'s covariance essentially
+    never is, bit-for-bit, once floating-point round-off enters -- and ``Covariance`` itself
+    tolerates that (``math.isclose``, ``rel_tol=1e-9``). Regression (``api-compat``, found
+    against an intermediate version of the units-independence fix that symmetrised the matrix
+    -- averaged the two off-diagonal entries -- before computing eigenvalues): both
+    :func:`numpy.linalg.eigvalsh` and ``models._is_positive_definite`` read only one triangle
+    by default and ignore the other, so *averaging* the two triangles is not a no-op and can
+    turn a matrix the old rule accepted (reading its lower triangle) into one the new rule
+    rejects. Each example therefore perturbs only the **upper** triangle by a small relative
+    amount, safely inside ``Covariance``'s own symmetry tolerance, so the generated matrices
+    are never bit-exactly symmetric and would have caught that regression.
+    """
+
+    @staticmethod
+    @st.composite
+    def _matrices(draw: st.DrawFn) -> np.ndarray:
+        n = draw(st.integers(min_value=1, max_value=4))
+        a_entries = draw(
+            st.lists(
+                st.floats(min_value=-3.0, max_value=3.0, allow_nan=False, allow_infinity=False),
+                min_size=n * n,
+                max_size=n * n,
+            )
+        )
+        a = np.array(a_entries, dtype=float).reshape(n, n)
+        base = a @ a.T + 1e-6 * np.eye(n)
+
+        exponents = draw(
+            st.lists(
+                st.integers(min_value=-8, max_value=8),
+                min_size=n,
+                max_size=n,
+            )
+        )
+        d = np.diag([10.0**e for e in exponents])
+        matrix = d @ base @ d
+
+        # Perturb only the upper triangle (row < col), leaving the lower triangle at its
+        # exact, congruence-transform-symmetric value -- within Covariance's rel_tol=1e-9
+        # symmetry tolerance, but not bit-exactly symmetric, matching the shape of
+        # api-compat's regression example (`b` in the lower triangle, `b + 1e-10` in the upper).
+        for i in range(n):
+            for j in range(i + 1, n):
+                relative_noise = draw(
+                    st.floats(
+                        min_value=-1e-10, max_value=1e-10, allow_nan=False, allow_infinity=False
+                    )
+                )
+                matrix[i, j] = matrix[i, j] * (1.0 + relative_noise)
+        return matrix
+
+    @given(_matrices())
+    @settings(max_examples=200, deadline=None)
+    def test_new_rule_accepts_every_matrix_the_old_rule_accepted(self, matrix: np.ndarray) -> None:
+        assume(bool(np.all(np.isfinite(matrix))))
+        assume(_old_rule_accepts(matrix))
+
+        assert _new_rule_accepts(matrix)
+
+    def test_regression_asymmetric_noise_within_tolerance_that_0_1_0a2_accepted_is_accepted(
+        self,
+    ) -> None:
+        """api-compat's exact regression example: ``0.1.0a2`` (the old rule) accepted this
+        matrix (its lower triangle, ``b``, gives eigenvalues ``1 +- b`` = ``2 - 2e-12`` and
+        ``2e-12``, both above the old tolerance ``1e-12 * max(1, max|entry|) = 1e-12``); an
+        intermediate version of the units-independence fix that averaged the two off-diagonal
+        entries before computing eigenvalues rejected it instead (the averaged entry pushes
+        the smaller eigenvalue negative). The fixed rule must accept it.
+        """
+        b = 1.0 - 2e-12
+        matrix = ((1.0, b + 1e-10), (b, 1.0))
+
+        covariance = Covariance(names=("x", "y"), matrix=matrix)
+
+        assert covariance.matrix == matrix
+
+
+class TestCovarianceStillRejects:
+    """The units-independence fix did not turn ``Covariance`` into a rubber stamp: every
+    matrix that was never a legitimate covariance -- singular, a non-positive variance, a
+    perfectly (colinear) correlated pair, or a non-finite entry -- is still rejected.
+    """
+
+    def test_singular_matrix_is_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            Covariance(names=("mu", "s"), matrix=((0.0, 0.0), (0.0, 1.0)))
+
+    def test_negative_diagonal_entry_is_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            Covariance(names=("mu", "s"), matrix=((-1.0, 0.0), (0.0, 1.0)))
+
+    def test_perfect_correlation_is_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            Covariance(names=("mu", "s"), matrix=((1.0, 1.0), (1.0, 1.0)))
+
+    def test_non_finite_entry_is_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            Covariance(names=("mu", "s"), matrix=((1.0, 0.0), (0.0, float("nan"))))
 
 
 class TestFitDefaults:

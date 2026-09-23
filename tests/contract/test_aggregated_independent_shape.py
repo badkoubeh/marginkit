@@ -219,15 +219,6 @@ def test_scorecard_of_fakes_round_trips_through_json_text() -> None:
     assert reloaded == card
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=(ImportError, TypeError),
-    reason="Phase 5: fit_dose_response exists (Phase 4), but threshold() does not yet -- "
-    "`from marginkit import threshold` binds the marginkit.threshold submodule (it is "
-    "imported as a side effect of marginkit/__init__.py), not a callable, until Phase 5 "
-    "exports the function, so calling it raises TypeError rather than the import raising "
-    "ImportError",
-)
 def test_pid_sensor_noise_absolute_0_95_gives_a_finite_bracketed_interval() -> None:
     """Worked case from plan section 5.5: the identifiable PID x sensor_noise transition."""
     from marginkit import Axis, Definition, Observations, fit_dose_response, threshold
@@ -253,15 +244,6 @@ def test_pid_sensor_noise_absolute_0_95_gives_a_finite_bracketed_interval() -> N
     assert 0.01 < t.value < 0.1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=(ImportError, TypeError),
-    reason="Phase 5: fit_dose_response exists (Phase 4), but threshold() does not yet -- "
-    "`from marginkit import threshold` binds the marginkit.threshold submodule (it is "
-    "imported as a side effect of marginkit/__init__.py), not a callable, until Phase 5 "
-    "exports the function, so calling it raises TypeError rather than the import raising "
-    "ImportError",
-)
 def test_pid_wind_absolute_0_95_is_right_censored_at_10() -> None:
     """Worked case from plan section 5.5: 500/500 at every tested wind level."""
     from marginkit import Axis, Definition, Observations, fit_dose_response, threshold
@@ -284,15 +266,6 @@ def test_pid_wind_absolute_0_95_is_right_censored_at_10() -> None:
     assert t.lo == 10.0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=(ImportError, TypeError),
-    reason="Phase 5: fit_dose_response exists (Phase 4), but threshold() does not yet -- "
-    "`from marginkit import threshold` binds the marginkit.threshold submodule (it is "
-    "imported as a side effect of marginkit/__init__.py), not a callable, until Phase 5 "
-    "exports the function, so calling it raises TypeError rather than the import raising "
-    "ImportError",
-)
 def test_sac_sensor_noise_absolute_0_95_fails_at_baseline() -> None:
     """Worked case from plan section 5.5: the SAC control is already at 98/200."""
     from marginkit import Axis, Definition, Observations, Status, fit_dose_response, threshold
@@ -313,15 +286,6 @@ def test_sac_sensor_noise_absolute_0_95_fails_at_baseline() -> None:
     assert t.status is Status.FAILS_AT_BASELINE
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=(ImportError, TypeError),
-    reason="Phase 5: fit_dose_response exists (Phase 4), but threshold() does not yet -- "
-    "`from marginkit import threshold` binds the marginkit.threshold submodule (it is "
-    "imported as a side effect of marginkit/__init__.py), not a callable, until Phase 5 "
-    "exports the function, so calling it raises TypeError rather than the import raising "
-    "ImportError",
-)
 def test_sac_sensor_noise_baseline_fraction_0_5_is_left_censored_at_0_01() -> None:
     """Worked case from plan section 5.5: the lowest nonzero level already fails."""
     from marginkit import Axis, Definition, Observations, fit_dose_response, threshold

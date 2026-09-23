@@ -15,15 +15,22 @@ port, and is not part of this release.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
 from numpy.typing import ArrayLike
+from scipy.stats import binomtest
 
-from marginkit.types import Censoring
+from marginkit.types import Cell, Censoring, _check_finite_number
 
-__all__ = ["GridBreakPoint", "grid_break_point"]
+__all__ = [
+    "BaselineRate",
+    "ExactRates",
+    "GridBreakPoint",
+    "grid_break_point",
+    "per_cell_clopper_pearson",
+]
 
 
 @dataclass(frozen=True)
@@ -162,4 +169,186 @@ def grid_break_point(
 
     return GridBreakPoint(
         value=float(np.min(failing)), max_tested=max_tested, censoring=Censoring.NONE
+    )
+
+
+_VALID_RATE_METHOD = "per_cell_clopper_pearson"
+
+
+def _check_rate(value: float, *, label: str) -> None:
+    _check_finite_number(value, label=label)
+    if not (0.0 <= value <= 1.0):
+        raise ValueError(f"{label} must lie in [0, 1], got {value!r}")
+
+
+@dataclass(frozen=True, kw_only=True)
+class BaselineRate:
+    """The zero-severity control's exact rate, attached to a :class:`~marginkit.Threshold` whose
+    ``status`` is :data:`~marginkit.Status.FAILS_AT_BASELINE` (`decisions/0010`).
+
+    Serialisable (unlike :class:`ExactRates`): a single control cell's rate, labelled with the
+    method it came from, is exactly what plan section 5.5 asks a ``FAILS_AT_BASELINE`` result to
+    report, and putting it in its own field keeps it out of ``Threshold.lo``/``.hi`` (plan
+    section 5.4 forbids attaching a per-cell exact rate to a threshold).
+
+    Attributes
+    ----------
+    severity
+        The control's severity. ``0.0`` in every case this package produces.
+    successes, trials
+        The control cell's observed counts.
+    rate
+        ``successes / trials``.
+    lo, hi
+        The **two-sided** exact (Clopper-Pearson) interval at ``level``, as plan section 5.4
+        specifies for a reported per-cell rate. This is deliberately not the one-sided bound
+        that decided the ``FAILS_AT_BASELINE`` classification: that asks "does this cell
+        provably fail the target", a one-sided question, while this describes where the control
+        rate lies.
+    level
+        The confidence of that interval. Carried here so the number is self-describing in a
+        stored card rather than requiring a reader to look at the enclosing ``Threshold``.
+    method
+        Always ``"per_cell_clopper_pearson"``.
+    """
+
+    severity: float
+    successes: int
+    trials: int
+    rate: float
+    lo: float
+    hi: float
+    level: float = 0.95
+    method: str = _VALID_RATE_METHOD
+
+    def __post_init__(self) -> None:
+        _check_finite_number(self.severity, label="BaselineRate.severity")
+        if self.severity < 0.0:
+            raise ValueError(f"BaselineRate.severity must be non-negative, got {self.severity!r}")
+        if isinstance(self.successes, bool) or isinstance(self.trials, bool):
+            raise ValueError("BaselineRate.successes and .trials must not be bool")
+        if self.trials < 1:
+            raise ValueError(f"BaselineRate.trials must be >= 1, got {self.trials!r}")
+        if not (0 <= self.successes <= self.trials):
+            raise ValueError(
+                f"BaselineRate.successes ({self.successes!r}) must satisfy "
+                f"0 <= successes <= trials ({self.trials!r})"
+            )
+        _check_rate(self.rate, label="BaselineRate.rate")
+        _check_rate(self.lo, label="BaselineRate.lo")
+        _check_rate(self.hi, label="BaselineRate.hi")
+        _check_finite_number(self.level, label="BaselineRate.level")
+        if not (0.0 < self.level < 1.0):
+            raise ValueError(f"BaselineRate.level must satisfy 0 < level < 1, got {self.level!r}")
+        if not self.lo <= self.rate <= self.hi:
+            raise ValueError(
+                f"BaselineRate requires lo <= rate <= hi, got lo={self.lo!r}, "
+                f"rate={self.rate!r}, hi={self.hi!r}"
+            )
+        if self.method != _VALID_RATE_METHOD:
+            raise ValueError(
+                f"BaselineRate.method must be {_VALID_RATE_METHOD!r}, got {self.method!r}"
+            )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExactRates:
+    """Per-cell exact (Clopper-Pearson-style) rate bounds for every cell in a fit (plan section
+    5.4), read directly from :attr:`marginkit.Fit.cells`.
+
+    **Deliberately not serialisable.** This type is excluded from ``report.py``'s tagged classes
+    and has no schema entry: ``report.to_dict`` raises ``TypeError`` on it. That is what
+    structurally enforces plan section 5.4's "never attach [per-cell rates] to a threshold" --
+    there is no JSON shape for a caller to smuggle one into.
+
+    Attributes
+    ----------
+    severity, rate, lo, hi
+        Parallel tuples, one entry per input cell, in the same order.
+    level
+        The confidence of the two-sided exact interval each ``lo``/``hi`` pair was computed at
+        (plan section 5.4).
+    method
+        Always ``"per_cell_clopper_pearson"``.
+    """
+
+    severity: tuple[float, ...]
+    rate: tuple[float, ...]
+    lo: tuple[float, ...]
+    hi: tuple[float, ...]
+    level: float = 0.95
+    method: str = _VALID_RATE_METHOD
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "severity", tuple(self.severity))
+        object.__setattr__(self, "rate", tuple(self.rate))
+        object.__setattr__(self, "lo", tuple(self.lo))
+        object.__setattr__(self, "hi", tuple(self.hi))
+        n = len(self.severity)
+        if not (len(self.rate) == len(self.lo) == len(self.hi) == n):
+            raise ValueError(
+                "ExactRates.severity, .rate, .lo and .hi must have equal length, got "
+                f"{n}, {len(self.rate)}, {len(self.lo)}, {len(self.hi)}"
+            )
+        _check_finite_number(self.level, label="ExactRates.level")
+        if not (0.0 < self.level < 1.0):
+            raise ValueError(f"ExactRates.level must satisfy 0 < level < 1, got {self.level!r}")
+        if self.method != _VALID_RATE_METHOD:
+            raise ValueError(
+                f"ExactRates.method must be {_VALID_RATE_METHOD!r}, got {self.method!r}"
+            )
+        for severity, rate, lo, hi in zip(self.severity, self.rate, self.lo, self.hi, strict=True):
+            _check_finite_number(severity, label="ExactRates.severity entry")
+            _check_rate(rate, label="ExactRates.rate entry")
+            _check_rate(lo, label="ExactRates.lo entry")
+            _check_rate(hi, label="ExactRates.hi entry")
+            if not lo <= rate <= hi:
+                raise ValueError(
+                    f"ExactRates requires lo <= rate <= hi per cell, got lo={lo!r}, "
+                    f"rate={rate!r}, hi={hi!r}"
+                )
+
+
+def per_cell_clopper_pearson(cells: Sequence[Cell], *, level: float = 0.95) -> ExactRates:
+    """The exact (Clopper-Pearson) rate and bounds for each cell in ``cells``, independently
+    (plan section 5.4, ROADMAP section 3.1).
+
+    Each cell's ``lo``/``hi`` are the **two-sided** exact interval at ``level``, putting
+    ``(1 - level) / 2`` in each tail -- plan section 5.4 defines a reported per-cell rate as
+    ``binomtest(k, n).proportion_ci(confidence_level=..., method="exact")``, which is two-sided.
+
+    That is deliberately **not** :func:`marginkit.censoring.exact_one_sided_bound`, which
+    answers the different, one-sided question a censoring classification asks ("does this cell
+    provably fail the target?"). The two coexist on purpose and must not be conflated: reporting
+    the one-sided pair under this function's name would label a roughly ``2 * level - 1`` region
+    as ``level``, which is the mislabelling `decisions/0009` exists to prevent.
+
+    Parameters
+    ----------
+    cells
+        The cells to compute rates for, typically ``fit.cells`` directly.
+    level
+        The confidence of the **two-sided** Clopper-Pearson interval, strictly between 0 and 1.
+        Defaults to ``0.95``. Plan section 5.4 defines a reported per-cell rate as
+        ``binomtest(k, n).proportion_ci(confidence_level=..., method="exact")``, which is
+        two-sided -- *not* the one-sided bound that decides a censoring classification. For
+        that, see ``marginkit.censoring.exact_one_sided_bound``.
+
+    Returns
+    -------
+    ExactRates
+        Parallel arrays, one entry per cell, in the given order. **Never attach this to a
+        threshold** (plan section 5.4); it is deliberately not serialisable (see
+        :class:`ExactRates`).
+    """
+    severity = tuple(c.severity for c in cells)
+    rate = tuple(c.successes / c.trials for c in cells)
+    intervals = [
+        binomtest(c.successes, c.trials).proportion_ci(confidence_level=level, method="exact")
+        for c in cells
+    ]
+    lo = tuple(float(i.low) for i in intervals)
+    hi = tuple(float(i.high) for i in intervals)
+    return ExactRates(
+        severity=severity, rate=rate, lo=lo, hi=hi, level=level, method=_VALID_RATE_METHOD
     )

@@ -13,6 +13,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from scipy.stats import binomtest
+
+from marginkit.empirical import BaselineRate, GridBreakPoint
 from marginkit.models import Covariance, Fit, Parameter
 from marginkit.ratio import Ratio
 from marginkit.threshold import Threshold
@@ -216,6 +219,30 @@ def fake_threshold(
         value, lo, hi = None, 0.02, 0.09
         interval_method = "exact_bound"
 
+    # decisions/0010: the two appended fields are set exactly where the invariants allow them,
+    # so a consumer testing against a fake sees the same shape a real result has. A fake that
+    # left them None on FAILS_AT_BASELINE would quietly stop exercising the field that status
+    # exists to carry.
+    baseline: BaselineRate | None = None
+    grid: GridBreakPoint | None = None
+    if status is Status.FAILS_AT_BASELINE:
+        # The two-sided exact interval for 98/200 at level=0.95, which is what
+        # `censoring._baseline_rate` produces for the same counts (plan section 5.4). Computed
+        # rather than transcribed, so the fake cannot drift from the real path -- an earlier
+        # version hardcoded a pair that differed from it, which `api-compat` caught.
+        _lo, _hi = binomtest(98, 200).proportion_ci(confidence_level=0.95, method="exact")
+        baseline = BaselineRate(
+            severity=0.0,
+            successes=98,
+            trials=200,
+            rate=0.49,
+            lo=float(_lo),
+            hi=float(_hi),
+            level=0.95,
+        )
+    elif status in (Status.SEPARATION, Status.NOT_CONVERGED):
+        grid = GridBreakPoint(0.05, 0.1, Censoring.NONE)
+
     return Threshold(
         axis=_AXIS,
         definition=Definition.absolute(0.95),
@@ -230,6 +257,8 @@ def fake_threshold(
         dependence="independent",
         fit=fit,
         warnings=(_FAKE_WARNING,),
+        baseline=baseline,
+        grid=grid,
         provenance=_fake_provenance(provenance),
     )
 

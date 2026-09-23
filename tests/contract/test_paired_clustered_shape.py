@@ -84,15 +84,6 @@ def test_clustered_observations_cells_totals_match_the_per_level_schedule() -> N
     assert obs.cells() == expected
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=(ImportError, TypeError),
-    reason="Phase 5: threshold() does not exist yet, and R2's dependence guard is not "
-    "implemented until then either -- `from marginkit import threshold` binds the "
-    "marginkit.threshold submodule (imported as a side effect of marginkit/__init__.py), not "
-    "a callable, until Phase 5 exports the function, so calling it raises TypeError rather "
-    "than the import raising ImportError",
-)
 def test_threshold_on_clustered_input_without_independent_dependence_raises() -> None:
     """R2: a method that assumes independence must refuse clustered input outright."""
     from marginkit import Definition, fit_dose_response, threshold

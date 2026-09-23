@@ -21,7 +21,18 @@ import math
 import pytest
 from scipy.stats import binomtest
 
-from marginkit import Cell
+from marginkit import (
+    Axis,
+    Cell,
+    Censoring,
+    Definition,
+    Observations,
+    Status,
+    Threshold,
+    fit_dose_response,
+    threshold,
+)
+from marginkit.censoring import exact_one_sided_bound
 from marginkit.report import to_dict
 from marginkit.testing import fake_fit
 
@@ -203,3 +214,71 @@ def test_exact_rates_is_not_serialisable_through_report_to_dict() -> None:
 
     with pytest.raises(TypeError):
         to_dict(rates)  # type: ignore[arg-type]
+
+
+class TestOneSidedExactBoundFallback:
+    """The exact-bound fallback's one-sided branch: reached when the bracket-level scan
+    determines exactly one side (`decisions/0009`'s amendment).
+
+    **This branch shipped once with no test and was wrong.** The rescan at `level` reassigned
+    *both* sides, so a cell undetermined at `(1 + level) / 2` but failing at `level` silently
+    manufactured a second bound -- a two-sided bracket with each side at `level`, joint coverage
+    about `2 * level - 1`, carried out to a `Threshold` still reporting `level`. That is the
+    exact mislabelling `decisions/0009` exists to prevent (`REVIEWS.md` R8 #18).
+
+    The `(k, n)` pairs that expose it are those where `upper(level) < target <= upper((1+level)/2)`.
+    `0/5` against a target of `0.5` at `level=0.95` is the smallest: `0.4507` at 0.95, `0.5218`
+    at 0.975.
+    """
+
+    @staticmethod
+    def _one_sided_fallback() -> Threshold:
+        obs = Observations.from_counts(
+            Axis(name="s", unit="u", scale="log"),
+            severity=[1.0, 10.0],
+            successes=[20, 0],
+            trials=[20, 5],
+            outcome="success",
+            direction="decreasing",
+        )
+        fit = fit_dose_response(obs, model="binomial", link="probit", upper=1.0, lower=0.0)
+        assert fit.status is Status.SEPARATION
+        return threshold(
+            fit, definition=Definition.absolute(0.5), interval_method="profile", level=0.95
+        )
+
+    def test_reports_exactly_one_bound_never_a_manufactured_bracket(self) -> None:
+        t = self._one_sided_fallback()
+
+        assert (t.lo is None) != (t.hi is None), (
+            "a one-sided fallback must report exactly one bound; two bounds here would each be "
+            "at `level`, making a bracket whose joint coverage is about 2*level - 1 while "
+            "Threshold.level still says level"
+        )
+        assert t.value is None
+        assert t.censoring is Censoring.NONE
+        assert t.interval_method == "exact_bound"
+
+    def test_the_warning_names_the_side_that_is_actually_set(self) -> None:
+        """The side must be decided from the bracket-level scan, before the rescan. Computing it
+        afterwards reported the opposite side, sending anyone debugging from the warning the
+        wrong way.
+        """
+        t = self._one_sided_fallback()
+
+        assert len(t.warnings) >= 1
+        warning = next(w for w in t.warnings if "determined only the" in w)
+        named_side = "lower" if "only the lower side" in warning else "upper"
+        set_side = "lower" if t.lo is not None else "upper"
+        assert named_side == set_side, f"warning says {named_side!r} but {set_side!r} is set"
+
+    def test_the_bound_is_a_tested_level_and_sits_at_the_stated_confidence(self) -> None:
+        t = self._one_sided_fallback()
+        bound = t.lo if t.lo is not None else t.hi
+
+        assert bound in (1.0, 10.0), "a fallback bound is always one of the tested severities"
+        # The determined side here is the lower one: severity 1.0 is 20/20, whose one-sided
+        # lower bound at 0.95 clears the 0.5 target. The point of the branch is that this is
+        # computed at `level`, not at the bracket's `(1 + level) / 2`.
+        assert t.lo == 1.0
+        assert exact_one_sided_bound(20, 20, level=0.95, side="lower") >= 0.5

@@ -103,8 +103,11 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: pip install -e ".[dev]"
       # A later -m overrides pyproject.toml's. --no-cov because the 90% gate is the fast
-      # suite's measurement and this run would distort it.
-      - run: pytest -m slow --no-cov
+      # suite's measurement and this run would distort it. `-s` is load-bearing: the whole
+      # point of this job is the coverage table these tests print, and pytest captures stdout
+      # for passing tests, so without it the job burns half an hour and logs nothing but
+      # PASSED. docs/validation.md quotes these numbers, so they have to be readable here.
+      - run: pytest -m slow --no-cov -s
 
   package:
     name: packaging shape

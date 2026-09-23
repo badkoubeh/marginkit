@@ -300,7 +300,14 @@ def _contradiction_warning(
     level: float,
 ) -> str:
     return (
-        "censoring.classify: exact one-sided tests at confidence "
+        # `decisions/0011`'s second amendment: the leading `NON_MONOTONE: ` token is the
+        # supported way to detect this condition until plan section 5.7's structured diagnostic
+        # lands in Phase 7. On a converged fit this warning is the *only* signal -- `grid` is
+        # legal only for SEPARATION/NOT_CONVERGED (`decisions/0010`), so a consumer filtering on
+        # `status is OK and censoring is NONE` would otherwise see a clean bounded interval from
+        # data the exact tests just proved inconsistent with any monotone curve. Changing or
+        # removing this token is a behaviourally breaking change.
+        "NON_MONOTONE: censoring.classify: exact one-sided tests at confidence "
         f"{level} contradict monotonicity (decisions/0011): severity {lo_severity} confidently "
         f"passes (lower bound {lo_bound!r} >= target {target!r}) while the lower severity "
         f"{hi_severity} confidently fails (upper bound {hi_bound!r} < target {target!r}); no "
@@ -451,18 +458,31 @@ def _exact_bound_fallback(
         )
     elif lo_severity is None or hi_severity is None:
         # Only one side is determined, so this is not a bracket and `decisions/0009`'s
-        # `(1 + level) / 2` split does not apply to it: a single one-sided statement belongs at
-        # `level`, like every other one-sided bound in the package, or `Threshold.level` would
-        # again mean something different on this one branch. Rescan at `level` and say in
-        # `warnings` which side is determined, since `censoring` stays `NONE` and cannot.
-        lo_severity, _, hi_severity, _ = _scan_bounds(cells, target=target, level=level)
-        side = "lower" if hi_severity is None else "upper"
+        # `(1 + level) / 2` split does not apply: a single one-sided statement belongs at
+        # `level`, like every other one-sided bound in the package.
+        #
+        # Which side that is must be decided from the *bracket-level* scan above, before the
+        # rescan, and the other side must be forced back to `None`. The looser `level` can
+        # determine a side that `(1 + level) / 2` did not -- a `0/5` cell has an upper bound of
+        # 0.5218 at 0.975 but 0.4507 at 0.95, so against a target of 0.5 it is undetermined at
+        # the bracket level and failing at `level`. Taking both sides from the rescan therefore
+        # manufactures a two-sided bracket with each side at `level`, whose joint coverage is
+        # about `2 * level - 1` while `Threshold.level` still reports `level`. That is exactly
+        # the mislabelling this branch exists to prevent, and an earlier version of it did
+        # precisely that (`REVIEWS.md` R8 #18).
+        determined = "lower" if hi_severity is None else "upper"
+        rescanned_lo, _, rescanned_hi, _ = _scan_bounds(cells, target=target, level=level)
+        if determined == "lower":
+            lo_severity, hi_severity = rescanned_lo, None
+        else:
+            lo_severity, hi_severity = None, rescanned_hi
         warnings = (
             "censoring.classify: the exact-bound fallback determined only the "
-            f"{side} side at confidence {level} -- no tested cell confidently "
-            f"{'failed' if side == 'lower' else 'passed'} the target {target!r} -- so this is a "
-            "one-sided exact bound, not a bracket. Censoring stays NONE because the bound sits "
-            "at a tested level inside the range, which is not what RIGHT/LEFT describe",
+            f"{determined} side at confidence {level} -- no tested cell confidently "
+            f"{'failed' if determined == 'lower' else 'passed'} the target {target!r} -- so "
+            "this is a one-sided exact bound, not a bracket. Censoring stays NONE because the "
+            "bound sits at a tested level inside the range, which is not what RIGHT/LEFT "
+            "describe",
         )
     return Classification(
         status=fit.status,

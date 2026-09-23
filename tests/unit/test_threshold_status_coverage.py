@@ -55,15 +55,70 @@ class TestControlIncompatible:
 
 
 class TestNotConverged:
-    """A dataset with a decreasing-but-shallow success rate and an *estimated* upper asymptote
-    that genuinely fails to converge under Phase 4's likelihood path (confirmed empirically:
-    ``fit_dose_response`` on this exact data returns ``Status.NOT_CONVERGED`` with 'the
-    optimizer did not converge' in ``warnings`` -- this is not the separation/control-
-    incompatible pre-fit check, it is the post-fit convergence check, decisions/0005).
+    """A ``NOT_CONVERGED`` fit reached through ``decisions/0005``'s **wrong-sign** check, which
+    is a sign test on the fitted slope rather than an optimiser tolerance.
+
+    Success *rises* with severity here while ``direction="decreasing"``, so the constrained
+    maximum (``s > 0``) is the flat curve and no finite ``(mu, s)`` exists. That verdict is
+    marginkit's own post-fit check on a slope that is unambiguously the wrong sign, so it does
+    not depend on how any particular optimiser build happens to terminate.
+
+    **This class previously probed for the other route to the same status -- a shallow
+    decreasing curve chosen to make the optimiser give up -- and that was hardware-dependent.**
+    It returned ``NOT_CONVERGED`` on macOS/arm64 and ``OK`` on Linux/x86_64 with byte-identical
+    dependency versions (numpy 2.4.6, scipy 1.17.1, statsmodels 0.15.0), so CI's three "latest"
+    legs failed while the dependency-floor leg passed. ``docs/REVIEWS.md`` R7 records the same
+    failure mode from Phase 4. Constructing a status out of an optimiser's give-up point is not
+    a reproducible test; constructing it out of a documented boundary check is.
+
+    Every other ``NOT_CONVERGED`` test in the suite (``tests/unit/test_models_fit.py``) already
+    uses the wrong-sign route, which is why none of them was affected.
     """
 
     def test_threshold_mirrors_not_converged_with_grid_attached(self) -> None:
-        axis = Axis(name="not_converged_probe", unit="unit", scale="log")
+        axis = Axis(name="wrong_sign_probe", unit="unit", scale="log")
+        obs = Observations.from_counts(
+            axis,
+            severity=[1.0, 2.0, 4.0, 8.0],
+            successes=[20, 35, 50, 65],
+            trials=[100, 100, 100, 100],
+            outcome="success",
+            direction="decreasing",
+        )
+        fit = fit_dose_response(obs, model="binomial", link="probit", upper="estimate", lower=0.0)
+        assert fit.status is Status.NOT_CONVERGED
+        assert any("no interior maximum" in w for w in fit.warnings)
+
+        # No control cell, so `FAILS_AT_BASELINE` cannot fire and the fallback is reached for
+        # any target. `absolute` needs no asymptote, which a NOT_CONVERGED fit cannot supply
+        # (`decisions/0008`).
+        t = threshold(
+            fit, definition=Definition.absolute(0.5), interval_method="profile", level=_LEVEL
+        )
+
+        assert t.status is fit.status is Status.NOT_CONVERGED
+        assert t.value is None
+        assert t.interval_method == "exact_bound"
+        assert t.censoring in (Censoring.NONE, Censoring.RIGHT, Censoring.LEFT)
+        # decisions/0010: grid is set on every SEPARATION/NOT_CONVERGED exact-bound fallback.
+        assert t.grid is not None
+
+    def test_shallow_decreasing_probe_is_handled_consistently_whatever_status_it_gets(
+        self,
+    ) -> None:
+        """The dataset the class used to assert ``NOT_CONVERGED`` on, kept for the code paths it
+        exercises -- the likelihood path with an estimated upper asymptote and a zero-severity
+        control -- but with the platform-dependent assertion removed.
+
+        Whether this fit converges is genuinely build-dependent: it returned ``NOT_CONVERGED``
+        on macOS/arm64 and ``OK`` on Linux/x86_64 with identical dependency versions. Both are
+        legitimate answers for a shallow curve near the edge of identifiability, and it is not
+        marginkit's job to make an optimiser terminate identically on every CPU. What *is*
+        marginkit's job is that the threshold agrees with whatever the fit decided, and that is
+        what this asserts -- so the test exercises the path on both platforms and can only fail
+        for a reason worth knowing about.
+        """
+        axis = Axis(name="shallow_probe", unit="unit", scale="log")
         obs = Observations.from_counts(
             axis,
             severity=[0.0, 1.0, 2.0, 4.0],
@@ -73,24 +128,27 @@ class TestNotConverged:
             direction="decreasing",
         )
         fit = fit_dose_response(obs, model="binomial", link="probit", upper="estimate", lower=0.0)
-        assert fit.status is Status.NOT_CONVERGED
-        assert any("did not converge" in w for w in fit.warnings)
 
-        # The target must clear the control, or `FAILS_AT_BASELINE` short-circuits ahead of the
-        # fallback this test is about (`decisions/0008` fixes that order). The control is
-        # 40/100, whose one-sided upper bound at 0.95 is 0.4870, so `absolute(0.5)` -- the
-        # target this probe first used -- is one the control already provably fails. 0.3 clears
-        # it and reaches the NOT_CONVERGED path.
+        # 0.3 clears the control's own one-sided upper bound (40/100 gives 0.4870 at 0.95), so
+        # FAILS_AT_BASELINE does not short-circuit ahead of the path under test
+        # (`decisions/0008` fixes that order).
         t = threshold(
             fit, definition=Definition.absolute(0.3), interval_method="profile", level=_LEVEL
         )
 
-        assert t.status is fit.status is Status.NOT_CONVERGED
-        assert t.value is None
-        assert t.interval_method == "exact_bound"
-        assert t.censoring in (Censoring.NONE, Censoring.RIGHT, Censoring.LEFT)
-        # decisions/0010: grid is set on every SEPARATION/NOT_CONVERGED exact-bound fallback.
-        assert t.grid is not None
+        if fit.status is Status.OK:
+            # A converged fit either reports a value, or says why it does not with a censoring
+            # label that carries a bound.
+            assert t.status in (Status.OK, Status.UNREACHABLE, Status.FAILS_AT_BASELINE)
+            if t.status is Status.OK and t.censoring is Censoring.NONE:
+                assert t.value is not None
+        else:
+            # A failed fit never produces a number, mirrors its status, and takes the
+            # exact-bound fallback with the grid statistic attached (`decisions/0010`).
+            assert t.status is fit.status
+            assert t.value is None
+            assert t.interval_method == "exact_bound"
+            assert t.grid is not None
 
 
 class TestUnreachableAboveAFixedCeiling:

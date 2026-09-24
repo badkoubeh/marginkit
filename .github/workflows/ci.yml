@@ -84,6 +84,31 @@ jobs:
           path: htmlcov/
           retention-days: 7
 
+  coverage-simulations:
+    name: coverage simulations (plan 6.3)
+    runs-on: ubuntu-latest
+    # Plan section 6.3's simulations are 2,000 replicates per design. They are excluded from
+    # the `test` matrix by pyproject.toml's `-m "not slow"`, and run here once, on one
+    # interpreter, rather than four times. `pull_request` only: they guard a statistical
+    # property that cannot regress without a source change, so a push to main re-running them
+    # buys nothing. The numbers they produce are recorded in docs/validation.md.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[dev]"
+      # A later -m overrides pyproject.toml's. --no-cov because the 90% gate is the fast
+      # suite's measurement and this run would distort it. `-s` is load-bearing: the whole
+      # point of this job is the coverage table these tests print, and pytest captures stdout
+      # for passing tests, so without it the job burns half an hour and logs nothing but
+      # PASSED. docs/validation.md quotes these numbers, so they have to be readable here.
+      - run: pytest -m slow --no-cov -s
+
   package:
     name: packaging shape
     runs-on: ubuntu-latest

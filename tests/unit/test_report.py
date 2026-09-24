@@ -22,6 +22,7 @@ import marginkit
 from marginkit import (
     Axis,
     Cell,
+    Censoring,
     Covariance,
     Definition,
     Fit,
@@ -30,6 +31,7 @@ from marginkit import (
     Parameter,
     Ratio,
     Scorecard,
+    Status,
     Threshold,
     grid_break_point,
 )
@@ -588,3 +590,100 @@ class TestFromDictNestedUnknownFieldNamesFieldAndBothVersions:
         assert "diagnostics" in message
         assert "9.9.9" in message
         assert marginkit.__version__ in message
+
+
+# ------------------------------------------------------------------------------------------
+# Phase 5, decisions/0010: Threshold.baseline / Threshold.grid, appended fields defaulting to
+# None. ``TestSchemaFieldParity`` above already checks that the schema and the dataclass agree
+# on field *names*; this section checks that the *values* survive a round trip, and that a card
+# written before these two fields existed (no ``baseline``/``grid`` keys at all) still loads.
+# ``BaselineRate`` does not exist yet, so it is imported locally inside each test that needs it,
+# not at module level -- the same reason every not-yet-existing Phase 5 name in
+# ``tests/contract/`` and ``tests/unit/test_censoring.py`` is imported locally: a module-level
+# ``ImportError`` here would abort collection of this entire file, not just these tests, taking
+# every one of this file's already-passing tests down with it.
+# ------------------------------------------------------------------------------------------
+
+
+class TestThresholdBaselineAndGridRoundTrip:
+    def test_fails_at_baseline_threshold_with_baseline_rate_round_trips(self) -> None:
+        from marginkit import BaselineRate
+
+        # FAILS_AT_BASELINE places no constraint on fit.status (plan section 5.5, decisions/0008):
+        # the control's exact test does not depend on the rest of the curve having converged, so
+        # the default (OK) fake fit is a legitimate underlying fit here.
+        fit = fake_fit()
+        baseline = BaselineRate(
+            severity=0.0,
+            successes=98,
+            trials=200,
+            rate=0.49,
+            lo=0.4188225152054292,
+            hi=0.5614782774378427,
+            method="per_cell_clopper_pearson",
+        )
+        t = Threshold(
+            axis=fit.axis,
+            definition=Definition.absolute(0.95),
+            direction=fit.direction,
+            value=None,
+            lo=None,
+            hi=None,
+            level=0.95,
+            interval_method="exact_bound",
+            censoring=Censoring.NONE,
+            status=Status.FAILS_AT_BASELINE,
+            dependence="independent",
+            fit=fit,
+            baseline=baseline,
+        )
+
+        rebuilt = from_dict(to_dict(t))
+
+        assert rebuilt == t
+        assert rebuilt.baseline == baseline
+        assert rebuilt.grid is None
+
+    def test_separation_threshold_with_grid_round_trips(self) -> None:
+        fit = fake_fit(status=Status.SEPARATION)
+        grid = GridBreakPoint(value=0.05, max_tested=0.1, censoring=Censoring.NONE)
+        t = Threshold(
+            axis=fit.axis,
+            definition=Definition.absolute(0.95),
+            direction=fit.direction,
+            value=None,
+            lo=None,
+            hi=None,
+            level=0.95,
+            interval_method="exact_bound",
+            censoring=Censoring.NONE,
+            status=Status.SEPARATION,
+            dependence="independent",
+            fit=fit,
+            grid=grid,
+        )
+
+        rebuilt = from_dict(to_dict(t))
+
+        assert rebuilt == t
+        assert rebuilt.grid == grid
+        assert rebuilt.baseline is None
+
+    def test_a_card_written_without_baseline_or_grid_keys_still_loads(self) -> None:
+        """Simulates a card written by a marginkit older than Phase 5, before these fields
+        existed at all -- not merely a card with ``"baseline": null``, which ``to_dict`` would
+        already write for every non-FAILS_AT_BASELINE/non-fallback threshold. Both keys are
+        deleted outright, and ``from_dict`` must still load the payload, filling each field from
+        the dataclass's own default (``None``), the same way it already does for ``warnings``
+        (``TestFromDictErrors::test_missing_defaulted_field_is_filled_from_its_default``).
+        """
+        payload = to_dict(fake_threshold())
+        assert payload["baseline"] is None
+        assert payload["grid"] is None
+        del payload["baseline"]
+        del payload["grid"]
+
+        rebuilt = from_dict(payload)
+
+        assert rebuilt.baseline is None
+        assert rebuilt.grid is None

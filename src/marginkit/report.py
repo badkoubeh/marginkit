@@ -42,7 +42,7 @@ from functools import lru_cache
 from importlib import resources
 from typing import Any
 
-from marginkit.empirical import GridBreakPoint
+from marginkit.empirical import BaselineRate, GridBreakPoint
 from marginkit.models import Covariance, Fit, Parameter
 from marginkit.ratio import Ratio
 from marginkit.threshold import Threshold
@@ -393,6 +393,15 @@ def _fit_from_dict(data: object, card_version: str | None) -> Fit:
     return Fit(**fields)
 
 
+def _baseline_rate_from_dict(data: object, card_version: str | None) -> BaselineRate:
+    """``BaselineRate`` is an untagged helper, like ``Cell`` and ``Parameter``: it only ever
+    appears as ``Threshold.baseline``, never as a card's top-level result, so it carries no
+    ``"type"`` discriminator.
+    """
+    fields = _validated_fields(BaselineRate, data, tagged=False, card_version=card_version)
+    return BaselineRate(**fields)
+
+
 def _threshold_from_dict(data: object, card_version: str | None) -> Threshold:
     fields = _validated_fields(Threshold, data, tagged=True, card_version=card_version)
     fields["axis"] = _axis_from_dict(fields["axis"], card_version)
@@ -400,6 +409,15 @@ def _threshold_from_dict(data: object, card_version: str | None) -> Threshold:
     fields["censoring"] = Censoring(fields["censoring"])
     fields["status"] = Status(fields["status"])
     fields["fit"] = _fit_from_dict(_expect_tag(fields["fit"], expected="Fit"), card_version)
+    # `baseline` and `grid` are the appended fields of `decisions/0010`. `_validated_fields`
+    # fills a key a card omits from the dataclass default, so a card written before Phase 5
+    # decodes with both `None` and needs no special case here.
+    if fields.get("baseline") is not None:
+        fields["baseline"] = _baseline_rate_from_dict(fields["baseline"], card_version)
+    if fields.get("grid") is not None:
+        fields["grid"] = _grid_break_point_from_dict(
+            _expect_tag(fields["grid"], expected="GridBreakPoint"), card_version
+        )
     return Threshold(**fields)
 
 

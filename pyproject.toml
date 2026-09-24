@@ -108,6 +108,11 @@ markers = [
 addopts = [
     "-v",
     "--strict-markers",
+    # Plan section 6.3's coverage simulations are 2,000 replicates per design and are marked
+    # `slow`. They are excluded here so the default run -- and every leg of CI's four-way
+    # matrix, which invokes a bare `pytest` -- stays fast, and so the 90% gate below measures
+    # the fast suite. Run them with `pytest -m slow --no-cov`; a later `-m` overrides this one.
+    "-m", "not slow",
     "--cov=marginkit",
     "--cov-branch",
     "--cov-report=term-missing",

@@ -1,9 +1,11 @@
-"""The threshold result and its censoring/status invariants (§5.5).
+"""The threshold result (§5.5) and :func:`threshold`, which solves for one (§5.3-§5.5).
 
-As of ``0.1.0a2`` this module holds only :class:`Threshold`. Solving for a threshold
-(``threshold()``, plan §4, §5.3-§5.5) is Phase 5 work and is not part of this release: there is
-no way to produce a non-fake :class:`Threshold` yet, only to construct one directly or via
-:func:`marginkit.testing.fake_threshold`.
+:func:`threshold` resolves the target performance for a :class:`~marginkit.Definition`
+(`decisions/0008`), classifies the fit against it (:mod:`marginkit.censoring`), and -- when the
+classification says to -- solves the closed form and runs the requested interval method
+(:mod:`marginkit.intervals`). ``interval_method`` is a *request*: every censored or failed
+result records ``"exact_bound"`` regardless of what was asked for, because that is the method
+that actually produced its numbers.
 """
 
 from __future__ import annotations
@@ -11,10 +13,21 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from marginkit.censoring import classify
+from marginkit.empirical import BaselineRate, GridBreakPoint
+from marginkit.intervals import delta_interval, profile_interval, solve_value
 from marginkit.models import Fit
-from marginkit.types import Axis, Censoring, Definition, JSONValue, Status, _check_finite_number
+from marginkit.types import (
+    Axis,
+    Cell,
+    Censoring,
+    Definition,
+    JSONValue,
+    Status,
+    _check_finite_number,
+)
 
-__all__ = ["Threshold"]
+__all__ = ["Threshold", "threshold"]
 
 _VALID_INTERVAL_METHODS = frozenset({"profile", "delta", "exact_bound"})
 _TERMINAL_STATUSES = frozenset(
@@ -56,8 +69,10 @@ class Threshold:
     construction regardless). A ``RIGHT`` bound reads "threshold > lo (one-sided, exact,
     monotonicity assumed)", never as a value on its own; the mirrored reading applies to
     ``LEFT``. A ``SEPARATION``/``NOT_CONVERGED`` bracket is built from *two* one-sided exact
-    bounds, each individually at confidence ``level``; their **joint** coverage is at least
-    ``2 * level - 1`` (a Bonferroni-style bound), not ``level`` itself.
+    bounds, each individually computed at confidence ``(1 + level) / 2`` (`decisions/0009`), so
+    their **joint** coverage is at least ``level`` -- not, as an earlier draft of this docstring
+    said, at least ``2 * level - 1`` from two bounds each at ``level``. A one-sided ``RIGHT``/
+    ``LEFT`` bound is genuinely one-sided and stays at ``level`` itself.
 
     Binomial curves are decreasing-only in this release: ``direction="increasing"`` raises,
     pending owner decision D5.
@@ -127,6 +142,14 @@ class Threshold:
     provenance
         An opaque mapping the caller may attach to record where the inputs came from.
         marginkit stores it and never interprets it. Empty by default.
+    baseline
+        The zero-severity control's exact rate, set exactly when ``status`` is
+        ``FAILS_AT_BASELINE`` (`decisions/0010`); ``None`` otherwise. Appended field, additive
+        under schema ``"1"``.
+    grid
+        The grid break-point value computed as part of the ``SEPARATION``/``NOT_CONVERGED``
+        exact-bound fallback, set exactly on that path (`decisions/0010`); ``None`` otherwise.
+        Appended field, additive under schema ``"1"``.
     """
 
     axis: Axis
@@ -144,6 +167,8 @@ class Threshold:
     warnings: tuple[str, ...] = ()
     schema_version: str = "1"
     provenance: Mapping[str, JSONValue] = field(default_factory=dict)
+    baseline: BaselineRate | None = None
+    grid: GridBreakPoint | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "warnings", tuple(self.warnings))
@@ -290,12 +315,28 @@ class Threshold:
             if self.lo is not None:
                 raise ValueError("Threshold.lo must be None when censoring is OPEN_LOWER")
         elif self.censoring is Censoring.NONE and self.status is Status.OK:
-            if self.value is None or self.lo is None or self.hi is None:
+            # `value` is still required. `lo`/`hi` are not: a converged fit on a design too
+            # coarse to constrain the parameter can have a profile that crosses the chi-square
+            # target on neither side, and v1 has no `Censoring` member for "open on both sides"
+            # (`OPEN_UPPER`/`OPEN_LOWER` each require their closed side to exist). Reporting the
+            # estimate with no bounds, and the reason in `warnings`, is the honest encoding;
+            # inventing a bound at the search limit would not be. Loosening an invariant is a
+            # Safe change (`docs/CONSUMERS.md`), but a card that relies on it needs a reader at
+            # least as new as the writer (`ARCHITECTURE.md` A9).
+            if self.value is None:
                 raise ValueError(
-                    "Threshold.value, .lo and .hi must all be set when censoring is NONE and "
-                    "status is OK"
+                    "Threshold.value must be set when censoring is NONE and status is OK"
                 )
-            if not (self.lo <= self.value <= self.hi):
+            if (self.lo is None) != (self.hi is None):
+                raise ValueError(
+                    "Threshold.lo and .hi must either both be set or both be None when "
+                    f"censoring is NONE and status is OK, got lo={self.lo!r}, hi={self.hi!r}"
+                )
+            if (
+                self.lo is not None
+                and self.hi is not None
+                and not (self.lo <= self.value <= self.hi)
+            ):
                 raise ValueError(
                     f"Threshold requires lo <= value <= hi, got lo={self.lo!r}, "
                     f"value={self.value!r}, hi={self.hi!r}"
@@ -305,3 +346,249 @@ class Threshold:
                     "Threshold.interval_method must be 'profile' or 'delta' when censoring is "
                     f"NONE and status is OK, got {self.interval_method!r}"
                 )
+
+        # decisions/0010: baseline/grid only ever *tighten* -- an existing invariant above is
+        # never weakened to admit them. Each is legal only alongside the status it documents;
+        # neither is required by that status (a threshold predating Phase 5 has both `None`).
+        if self.baseline is not None and self.status is not Status.FAILS_AT_BASELINE:
+            raise ValueError(
+                "Threshold.baseline may only be set when status is FAILS_AT_BASELINE, got "
+                f"status={self.status!r}"
+            )
+        if self.grid is not None and self.status not in _NONCONVERGENT_STATUSES:
+            raise ValueError(
+                "Threshold.grid may only be set when status is SEPARATION or NOT_CONVERGED, got "
+                f"status={self.status!r}"
+            )
+
+
+_VALID_INTERVAL_METHOD_REQUESTS = frozenset({"profile", "delta"})
+_VALID_DEPENDENCE_INPUTS = frozenset({"independent"})
+
+
+def _control_cell_or_none(fit: Fit) -> Cell | None:
+    for cell in fit.cells:
+        if cell.severity == 0.0:
+            return cell
+    return None
+
+
+def _resolve_target(definition: Definition, *, fit: Fit) -> tuple[float, str | None]:
+    """The already-resolved target performance ``P*`` (plan §5.3) plus an optional warning
+    naming where an asymptote came from (`decisions/0008`).
+
+    ``absolute(a)`` never needs an asymptote at all: ``P* = a``. ``baseline_fraction(p)`` and
+    ``relative(p)`` need ``upper`` (and, for ``relative``, ``lower``): the fitted values when
+    ``fit.status is Status.OK``, or -- since there are no fitted asymptotes on the exact-bound
+    fallback path -- the zero-severity control cell's own observed rate for ``upper`` (with
+    ``lower`` taken as ``0.0``, since nothing in the data speaks to a floor without a fit) and a
+    warning naming that substitution.
+    """
+    if definition.kind == "absolute":
+        return definition.value, None
+
+    if fit.status is Status.OK:
+        assert fit.params is not None
+        upper = fit.params["upper"].value
+        lower = fit.params["lower"].value
+        warning = None
+    else:
+        if definition.kind == "relative":
+            # `relative(p)` needs BOTH asymptotes: `P* = u - p*(u - l)`. `decisions/0008` says
+            # where `u` comes from when the fit failed (the control cell's observed rate) and
+            # says nothing about `l`, because nothing in the data speaks to a lower asymptote.
+            # Substituting `l = 0` would silently turn `relative(p)` into
+            # `baseline_fraction(1 - p)` and, whenever the true floor is above zero, aim at a
+            # target that is easier to clear -- an optimistic threshold produced on a failed
+            # fit, which is the case hard constraint 3 exists for. Refuse instead, as this
+            # function already refuses when there is no control cell to supply `u`.
+            raise ValueError(
+                f"threshold: definition.kind='relative' needs both asymptotes to resolve a "
+                f"target, and fit.status is {fit.status!r} (no fitted asymptotes). There is no "
+                "defensible fallback for the lower asymptote -- nothing in the data speaks to "
+                "it -- so no target is resolved. Use absolute(a), which needs no asymptote, or "
+                "baseline_fraction(p), which needs only the control rate (decisions/0008)"
+            )
+        control = _control_cell_or_none(fit)
+        if control is None:
+            raise ValueError(
+                f"threshold: definition.kind={definition.kind!r} needs an upper asymptote to "
+                f"resolve a target, fit.status is {fit.status!r} (no fitted asymptotes), and "
+                "there is no zero-severity control cell to fall back to (decisions/0008)"
+            )
+        upper = control.successes / control.trials
+        lower = 0.0
+        warning = (
+            f"threshold: fit.status is {fit.status!r} (no fitted asymptotes); the target for "
+            f"definition.kind={definition.kind!r} was resolved from the zero-severity control "
+            f"cell's observed rate ({control.successes}/{control.trials} = {upper!r}), not a "
+            "fitted upper asymptote (decisions/0008)"
+        )
+
+    if definition.kind == "baseline_fraction":
+        return definition.value * upper, warning
+    return upper - definition.value * (upper - lower), warning  # relative
+
+
+def threshold(
+    fit: Fit,
+    *,
+    definition: Definition,
+    interval_method: str,
+    level: float,
+    dependence: str | None = None,
+) -> Threshold:
+    """Solve for where ``fit``'s curve crosses ``definition``'s target performance, with a
+    confidence interval, or report why no value exists (plan §4, §5.3-§5.5).
+
+    ``interval_method`` is a *request*, not a promise: every censored or failed result records
+    ``"exact_bound"`` regardless of what was requested, because that is the method that actually
+    produced its numbers (§5.2, §5.5). The order in which the outcomes below are checked is
+    :mod:`marginkit.censoring`'s module docstring, not this one's.
+
+    Parameters
+    ----------
+    fit
+        The fit to solve a threshold from.
+    definition
+        Which target performance to solve for (§5.3).
+    interval_method
+        ``"profile"`` (primary, §5.4) or ``"delta"`` (cross-check). Required, with no default.
+    level
+        The confidence level, strictly between 0 and 1.
+    dependence
+        ``None`` (the default) resolves to ``"independent"`` unless ``fit.cluster_ids`` is set,
+        in which case omitting it raises (R2: a method assuming independence must refuse
+        clustered input unless the caller explicitly opts in). ``"independent"`` may always be
+        passed explicitly. ``"paired"`` raises, naming that it is v0.2 Phase 9 work. The
+        resulting ``Threshold.dependence`` is always ``"independent"`` in this release.
+
+    Returns
+    -------
+    Threshold
+
+    Raises
+    ------
+    ValueError
+        If ``interval_method`` or ``level`` is invalid; if ``dependence`` is omitted while
+        ``fit.cluster_ids`` is set, or is any value other than ``None``/``"independent"``/
+        ``"paired"``; if ``dependence="paired"`` is requested (not yet implemented); or if
+        ``definition.kind`` is ``"baseline_fraction"``/``"relative"``, ``fit.status`` is not
+        ``OK``, and no zero-severity control cell exists to resolve a target from
+        (`decisions/0008`).
+    """
+    if interval_method not in _VALID_INTERVAL_METHOD_REQUESTS:
+        raise ValueError(
+            "threshold: interval_method must be one of "
+            f"{sorted(_VALID_INTERVAL_METHOD_REQUESTS)}, got {interval_method!r}"
+        )
+    _check_finite_number(level, label="threshold level")
+    if not (0.0 < level < 1.0):
+        raise ValueError(f"threshold: level must satisfy 0 < level < 1, got {level!r}")
+
+    if dependence == "paired":
+        raise ValueError(
+            "threshold: dependence='paired' is not implemented until v0.2 Phase 9 (plan §5.6, "
+            "D6); pass dependence='independent' explicitly to acknowledge independence is being "
+            "assumed anyway, or wait for Phase 9"
+        )
+    if dependence is not None and dependence not in _VALID_DEPENDENCE_INPUTS:
+        raise ValueError(
+            "threshold: dependence must be None, 'independent', or (v0.2, not yet implemented) "
+            f"'paired', got {dependence!r}"
+        )
+    if fit.cluster_ids is not None and dependence is None:
+        raise ValueError(
+            "threshold: fit carries cluster ids (fit.cluster_ids is set); a method that assumes "
+            "independence must not run on clustered data unless the caller passes "
+            "dependence='independent' explicitly (R2)"
+        )
+
+    target, target_warning = _resolve_target(definition, fit=fit)
+    collected_warnings: list[str] = [] if target_warning is None else [target_warning]
+
+    classification = classify(fit, target=target, level=level)
+    collected_warnings.extend(classification.warnings)
+
+    if classification.solve:
+        theta_hat, value = solve_value(fit, target=target)
+        if value <= 0.0:
+            # A linear axis can solve to a crossing at or below zero severity. v0.1 severity is
+            # non-negative (`Threshold` enforces it), so such a crossing is not reachable on the
+            # axis as tested. This is `REVIEWS.md` R6 #4, decided during Phase 5: report it as
+            # UNREACHABLE with a warning that names the solved value, so it is distinguishable
+            # from the asymptote-driven UNREACHABLE of `decisions/0008`. Allowing negative
+            # thresholds later is a loosening, and therefore safe.
+            collected_warnings.append(
+                "threshold: the fitted curve is already below the target at severity 0 -- it "
+                f"crosses at {value!r}, at or below the axis origin, so on this axis the "
+                "criterion fails before any severity is applied. Reported as UNREACHABLE "
+                "because a v0.1 severity axis is non-negative and v1 has no model-based "
+                "equivalent of FAILS_AT_BASELINE (decisions/0014)"
+            )
+            return Threshold(
+                axis=fit.axis,
+                definition=definition,
+                direction=fit.direction,
+                value=None,
+                lo=None,
+                hi=None,
+                level=level,
+                interval_method="exact_bound",
+                censoring=Censoring.NONE,
+                status=Status.UNREACHABLE,
+                dependence="independent",
+                fit=fit,
+                warnings=tuple(collected_warnings),
+                baseline=None,
+                grid=None,
+            )
+        if interval_method == "profile":
+            interval_result = profile_interval(
+                fit, definition=definition, target=target, level=level, theta_hat=theta_hat
+            )
+        else:
+            interval_result = delta_interval(
+                fit,
+                definition=definition,
+                target=target,
+                level=level,
+                theta_hat=theta_hat,
+                value=value,
+            )
+        collected_warnings.extend(interval_result.warnings)
+        return Threshold(
+            axis=fit.axis,
+            definition=definition,
+            direction=fit.direction,
+            value=value,
+            lo=interval_result.lo,
+            hi=interval_result.hi,
+            level=level,
+            interval_method=interval_method,
+            censoring=interval_result.censoring,
+            status=Status.OK,
+            dependence="independent",
+            fit=fit,
+            warnings=tuple(collected_warnings),
+            baseline=None,
+            grid=None,
+        )
+
+    return Threshold(
+        axis=fit.axis,
+        definition=definition,
+        direction=fit.direction,
+        value=None,
+        lo=classification.lo,
+        hi=classification.hi,
+        level=level,
+        interval_method="exact_bound",
+        censoring=classification.censoring,
+        status=classification.status,
+        dependence="independent",
+        fit=fit,
+        warnings=tuple(collected_warnings),
+        baseline=classification.baseline,
+        grid=classification.grid,
+    )

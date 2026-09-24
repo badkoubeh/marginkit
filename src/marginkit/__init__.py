@@ -14,18 +14,29 @@ interval-shape enums (:class:`Status`, :class:`IntervalShape`, alongside the exi
 (``marginkit.report``) and the schema-valid test fakes (``marginkit.testing``) are importable
 as submodules but are not re-exported here.
 
-Solving for a threshold and computing a ratio interval are **not part of this release**: there
-is no ``threshold`` or ``ratio_interval`` yet, only the result types those functions will
-return. They arrive in Phases 5-6.
+As of ``0.1.0a3`` this release adds :func:`threshold`, which solves for the severity at which
+a fitted curve crosses a target performance and attaches an interval or an explicit censoring
+label (plan §5.3-§5.5), together with :class:`BaselineRate`, :class:`ExactRates` and
+:func:`per_cell_clopper_pearson`. Computing a ratio interval is still **not part of this
+release**: there is no ``ratio_interval`` yet, only the :class:`Ratio` type it will return. It
+arrives in Phase 6.
+
+Note that ``marginkit.threshold`` is now the *function*, not the submodule.
 """
 
 from __future__ import annotations
 
-from marginkit.empirical import GridBreakPoint, grid_break_point
+from marginkit.empirical import (
+    BaselineRate,
+    ExactRates,
+    GridBreakPoint,
+    grid_break_point,
+    per_cell_clopper_pearson,
+)
 from marginkit.models import Covariance, Fit, Parameter, Prediction, fit_dose_response
 from marginkit.ratio import Ratio
 from marginkit.report import Scorecard
-from marginkit.threshold import Threshold
+from marginkit.threshold import Threshold, threshold
 from marginkit.types import (
     Axis,
     Cell,
@@ -36,14 +47,16 @@ from marginkit.types import (
     Status,
 )
 
-__version__ = "0.1.0a2"
+__version__ = "0.1.0a3"
 
 __all__ = [
     "Axis",
+    "BaselineRate",
     "Cell",
     "Censoring",
     "Covariance",
     "Definition",
+    "ExactRates",
     "Fit",
     "GridBreakPoint",
     "IntervalShape",
@@ -57,4 +70,6 @@ __all__ = [
     "__version__",
     "fit_dose_response",
     "grid_break_point",
+    "per_cell_clopper_pearson",
+    "threshold",
 ]

@@ -11,7 +11,12 @@ satisfy the public-API change checklist in `docs/IMPLEMENTATION_PLAN.md` Appendi
 
 ## [Unreleased]
 
-Phase 4: dose-response fitting. Additive; upgrading from 0.1.0a2 needs no consumer change.
+Phases 4 and 5, to be tagged `v0.1.0a3`. Additive; upgrading from 0.1.0a2 needs no consumer
+change. The two phases share one version because `v0.1.0a3` was never tagged for Phase 4 on its
+own -- Phase 4 merged with `__version__` still at `0.1.0a2`, so retro-tagging that commit would
+ship a package reporting the wrong version.
+
+### Phase 4 -- dose-response fitting
 
 ### Added
 - `fit_dose_response(obs, *, model, link, upper, lower) -> Fit`. All four keywords are required,
@@ -41,11 +46,59 @@ Phase 4: dose-response fitting. Additive; upgrading from 0.1.0a2 needs no consum
 ### Unchanged
 - JSON schema v1 and every existing field and signature.
 
-### Notice (takes effect with Phase 5)
-- Exporting `threshold()` will make the attribute `marginkit.threshold` the function, not the
-  module. `import marginkit.threshold as m; m.Threshold` will stop working. Use
-  `from marginkit import Threshold`; `from marginkit.threshold import Threshold` keeps working
-  but is not API.
+### Notice (now in effect, as of Phase 5)
+- Exporting `threshold()` has made the attribute `marginkit.threshold` the function, not the
+  module. `import marginkit.threshold as m; m.Threshold` no longer works. Use
+  `from marginkit import Threshold`; `from marginkit.threshold import Threshold` still resolves
+  through `sys.modules` but is not API.
+
+### Phase 5 -- thresholds, intervals, censoring
+
+#### Added
+- `threshold(fit, *, definition, interval_method, level, dependence=None) -> Threshold`. Solves
+  for the severity at which the fitted curve crosses a target performance, for all three
+  definitions (`absolute`, `baseline_fraction`, `relative`); `definition` has no default,
+  pending D5. `interval_method` is `"profile"` (primary) or `"delta"`, and is a *request*: on
+  any censored or failed path the result records `"exact_bound"`. Omitting `dependence` on
+  clustered input raises (R2).
+- `Threshold.baseline: BaselineRate | None` and `Threshold.grid: GridBreakPoint | None`, both
+  defaulting to `None`. They carry what plan section 5.5 says a `FAILS_AT_BASELINE` and a
+  `SEPARATION`/`NOT_CONVERGED` result must report, which previously had nowhere to live
+  (`decisions/0010`). Appended fields: code upgrading from 0.1.0a2 is unaffected, but a stored
+  card carrying them must be read by a marginkit at least as new as the writer.
+- `BaselineRate`: the control cell's rate with its exact interval, labelled
+  `per_cell_clopper_pearson`. Serialisable, as a `Threshold` field.
+- `per_cell_clopper_pearson(cells, *, level=0.95) -> ExactRates`. `ExactRates` is deliberately
+  **not** serialisable and has no schema entry, which is what enforces plan section 5.4's rule
+  that per-cell exact rates never attach to a threshold.
+- Internal modules `marginkit.censoring` (section 5.5's rules and the exact one-sided bounds)
+  and `marginkit.intervals` (profile and delta). Neither import path is API.
+- Decisions `0008` (`baseline_fraction` reachability, the fallback `u`, and `FAILS_AT_BASELINE`
+  before `UNREACHABLE`), `0009` (each side of a two-sided exact bracket at `(1 + level)/2`),
+  `0010` (the two appended fields), `0011` (exact bounds contradicting monotonicity report no
+  bounds), `0012` (section 5.5's `RIGHT`/`LEFT` conditions outrank a converged fit), `0013` (an
+  interval unbounded on both sides reports the estimate with no bounds) and `0014` (a crossing at
+  or below zero severity on a linear axis is `UNREACHABLE`).
+
+#### Changed
+- **`Threshold`'s `(status=OK, censoring=NONE)` invariant is loosened.** `value` is still
+  required, but `lo` and `hi` may now both be `None` (they must be both set or both `None`). A
+  converged fit on a design too coarse to constrain the parameter has a profile that crosses the
+  chi-square target on neither side, and v1 has no `Censoring` member for "open on both sides";
+  the estimate is reported, the bounds are not, and `warnings` names the search limits that were
+  reached (`decisions/0013`). Safe for code that *constructs* a `Threshold`. **Code that reads
+  `Threshold.lo`/`.hi` must now handle `None` on the `OK` path, not only on the censored ones.**
+- `threshold()` returns `Status.UNREACHABLE` with `censoring=NONE` and no numbers when the
+  closed-form solve lands at or below zero severity on a linear axis, rather than raising from
+  `Threshold`'s non-negativity rule. `UNREACHABLE` now has two causes and `warnings` tells them
+  apart (`decisions/0014`). Only linear axes can reach it.
+- `Threshold`'s docstring no longer claims a `SEPARATION`/`NOT_CONVERGED` bracket has joint
+  coverage `2 * level - 1`. Each side is now computed at `(1 + level)/2`, so joint coverage is
+  at least `level` and `Threshold.level` means the same thing on every path (`decisions/0009`).
+  Behavioural for brackets, which are wider than the superseded wording implied; one-sided
+  `RIGHT`/`LEFT` bounds are unchanged at `level`.
+- The default `pytest` run excludes the `slow` marker, and a separate CI job runs plan section
+  6.3's coverage simulations once rather than on each of four matrix legs.
 
 ## [0.1.0a2] — 2026-09-14
 

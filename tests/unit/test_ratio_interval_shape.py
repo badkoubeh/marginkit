@@ -25,7 +25,7 @@ table (``_expected_shape_and_bounds`` below is this table, executable):
   ``K > 0`` (product of roots ``= K/A < 0``), so intersected with the positive axis only the
   positive root survives -- **``HALF_OPEN`` with ``lo`` = that positive root**
   (`decisions/0022`, superseding the ``EXCLUSIVE`` this branch previously reported: measured at
-  ~24% of reachable Fieller results under independence, not the rare case ``0017`` assumed when
+  an open region of the parameter space, not the measure-zero case ``0017`` assumed when
   it decided the frozen-enum cost wasn't worth paying). When ``K <= 0`` instead, both roots are
   negative (`decisions/0021`) and the set is again all of ``(0, inf)`` -- ``UNBOUNDED``.
 - **``EXCLUSIVE`` is unreachable through ``ratio_interval()`` in v0.1.** It would need
@@ -37,10 +37,16 @@ table (``_expected_shape_and_bounds`` below is this table, executable):
 **The primary versions of every shape here construct their ``Fit``/``Threshold`` objects
 directly rather than fitting real data**, so the expected ``Va``/``Vb`` are known exactly and
 ``ratio_interval()``'s output can be checked against the closed form above to a tight tolerance,
-not just by shape name. There is no lower-level "shape-selection helper" to call instead:
-``marginkit/ratio.py`` holds ``Ratio`` and ``ratio_interval()`` together, with no separately
-importable shape computation, so every case here goes through the public ``ratio_interval()``
-end-to-end on hand-built inputs, which is the smallest thing that can be tested.
+not just by shape name. Every case here goes through the public ``ratio_interval()`` end-to-end
+on hand-built inputs, which is the smallest thing that can be tested through the public API --
+**with one documented exception**, ``TestEmptyConfidenceSetRaises`` at the end of this file: the
+``A == 0, B == 0, K > 0`` empty-confidence-set case (`docs/REVIEWS.md` R9 #11) is mathematically
+unreachable through any real ``Threshold`` (``B = theta_a*theta_b == 0`` forces
+``theta_a == 0``, which in turn forces ``K = -z^2*Va <= 0``, so ``K > 0`` can never coincide with
+it for a genuine, non-negative delta-method variance) while ``dependence="independent"`` fixes
+``C = 0``; that one test calls ``marginkit.ratio``'s private ``_fieller_shape`` directly, with a
+deliberately-impossible negative ``va``, and says so rather than pretending a public-API route
+exists.
 
 **``g >= 1`` is also reachable through a real fit, confirmed by search, not assumed impossible.**
 It needs a denominator threshold whose relative log-scale uncertainty exceeds ``1/z`` (about 51%
@@ -89,6 +95,7 @@ from marginkit import (
     threshold,
 )
 from marginkit.models import Covariance, Parameter
+from marginkit.ratio import _fieller_shape
 
 _AXIS = Axis(name="severity", unit="unit", scale="log")
 _LEVEL = 0.95
@@ -444,7 +451,7 @@ class TestHalfOpenFromConstructedInputs:
     severity ratio, reported with no warning. The round-1 property test written against that
     expectation (``tests/property/test_ratio_interval_properties.py``'s
     ``TestFiellerLowerAndUpperNeverNegative``) is what surfaced it as a live defect rather than a
-    hypothetical one, and measuring how often it occurs (~24% of reachable Fieller results under
+    hypothetical one, and showing it occupies an open region of the parameter space (under
     independence, `decisions/0022`) is what turned it into a decision: intersected with the
     positive parameter space, ``(-inf, -1.141] union [0.055, inf)`` is exactly ``[0.055, inf)``
     -- ``HALF_OPEN`` with ``lo = 0.055`` (the positive root), not ``EXCLUSIVE``.
@@ -722,3 +729,36 @@ class TestExclusiveRemainsAValidRatioShapeForV02:
                 censoring=Censoring.NONE,
                 status=Status.OK,
             )
+
+
+class TestEmptyConfidenceSetRaises:
+    """Regression (Phase 6 outsider `/code-review` of PR #8, ``docs/REVIEWS.md`` R9 #11):
+    ``A == 0`` degenerates the Fieller inequality to the linear ``-2*B*rho + K <= 0``; when
+    ``B`` is *also* ``0`` (only possible under independence via ``theta_a == 0``, module
+    docstring) that degenerates further to ``K <= 0``, so ``K > 0`` describes an **empty**
+    confidence set -- not a half-line, and reporting ``UNBOUNDED`` (the whole positive axis) used
+    to be the least informative possible answer to what is actually a contradictory input. It now
+    raises ``ValueError`` naming the empty set, rather than reporting a shape at all.
+
+    **Unreachable through the public API in v0.1**, confirmed by the module docstring's argument,
+    not merely asserted: this test calls ``marginkit.ratio``'s private ``_fieller_shape`` directly
+    with ``theta_a=0.0`` and a deliberately-impossible **negative** ``va`` -- no real
+    delta-method variance is ever negative, and a genuine non-negative ``va`` with
+    ``theta_a == 0`` forces ``K = -z^2*va <= 0``, never ``> 0``. ``v0.2``'s ``dependence="paired"``
+    (nonzero covariance ``C``) can reach ``B == 0`` without ``theta_a == 0``, and that path may
+    reach ``K > 0`` genuinely -- this branch is guarded, not dead, but it is guarded against a
+    case v0.1 itself cannot construct.
+    """
+
+    def test_a_zero_b_zero_k_positive_raises_rather_than_reporting_unbounded(self) -> None:
+        z = _Z
+        theta_b = 1.0
+        vb = 1.0 / (z**2)  # the same bit-exact A == 0 trick used throughout this file
+        assert theta_b**2 - z**2 * vb == 0.0
+
+        with pytest.raises(ValueError) as exc_info:
+            _fieller_shape(theta_a=0.0, va=-1.0, theta_b=theta_b, vb=vb, z=z)
+
+        message = str(exc_info.value)
+        assert "empty" in message.lower()
+        assert len(message.strip()) > 20

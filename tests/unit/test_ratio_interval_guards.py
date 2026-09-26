@@ -312,3 +312,42 @@ class TestLogDeltaOverflowRaises:
 
         with pytest.raises(ValueError, match="(?i)fieller"):
             ratio_interval(t_a, t_b, method="log_delta", dependence="independent", level=0.95)
+
+
+class TestLogDeltaUnderflowRaisesFromRatioIntervalNotFromRatio:
+    """Regression (Phase 6 outsider `/code-review` of PR #8, ``docs/REVIEWS.md`` R9 #12): a
+    ``log_delta`` half-width can sit *under* ``_MAX_LOG_HALF_WIDTH`` (700, the overflow guard
+    ``TestLogDeltaOverflowRaises`` above exercises) and still underflow the exponentiated ``lo``
+    to exactly ``0.0`` -- ``math.isfinite(0.0)`` is ``True``, so before the fix this endpoint
+    passed ``ratio_interval``'s own check and the failure only surfaced downstream, from
+    ``Ratio.__post_init__``'s generic ``method='log_delta' requires lo > 0`` invariant, with none
+    of ``decisions/0020``'s "there is no defensible bounded interval, use method='fieller'"
+    context. ``ratio_interval`` must be the one to raise now, not ``Ratio``.
+
+    **Reachable through the public API**, verified directly (not a below-the-public-API
+    construction): splitting the variance across *both* inputs, rather than putting it all on
+    one side, keeps each individual ``Threshold`` constructible (a single side carrying all of
+    it would underflow *that* side's own ``lo``, which ``Threshold`` itself already rejects on a
+    log axis). With ``sigma_log = 357 / sqrt(2) ~= 252.4`` on each side and
+    ``value_a=1e-20, value_b=1.0``: each input's own delta-method ``lo`` (``~1.3e-235`` and
+    ``~1.3e-215`` respectively) is a normal, representable float, but the combined
+    ``sigma_log_ratio = sqrt(252.4^2 + 252.4^2) = 357`` gives ``half_width = z*357 ~= 699.7``
+    (under the 700 guard, so the overflow check does not fire) while
+    ``lo = 1e-20 * exp(-699.7)`` underflows to exactly ``0.0`` -- confirmed empirically before
+    writing this assertion, not assumed from the arithmetic alone.
+    """
+
+    def test_underflowed_lo_raises_from_ratio_interval_with_the_endpoint_reason(self) -> None:
+        sigma_log = 357.0 / math.sqrt(2.0)
+        t_a = _threshold_with_log_scale_se(value=1e-20, sigma_log=sigma_log)
+        t_b = _threshold_with_log_scale_se(value=1.0, sigma_log=sigma_log)
+
+        with pytest.raises(ValueError) as exc_info:
+            ratio_interval(t_a, t_b, method="log_delta", dependence="independent", level=0.95)
+
+        message = str(exc_info.value)
+        # Substance, not exact wording (test-author brief): the message must be about
+        # ratio_interval's own endpoint/interval reasoning, not Ratio's generic invariant name.
+        assert "ratio_interval" in message
+        assert "Ratio.lo must be > 0" not in message
+        assert len(message.strip()) > 20

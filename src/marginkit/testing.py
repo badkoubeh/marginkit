@@ -357,9 +357,9 @@ def fake_ratio(
         elif resolved_shape is IntervalShape.UNBOUNDED:
             lo, hi = None, None
         elif resolved_shape is IntervalShape.HALF_OPEN:
-            # [lo, inf): lo <= estimate is Ratio's own invariant (decisions/0022). This is the
-            # shape a real ratio_interval(method="fieller") call actually produces for roughly a
-            # quarter of reachable results (decisions/0022), unlike EXCLUSIVE below.
+            # [lo, inf): lo <= estimate is Ratio's own invariant (decisions/0022). This is a
+            # shape a real ratio_interval(method="fieller") call does produce -- it covers an
+            # open region of the parameter space (decisions/0022) -- unlike EXCLUSIVE below.
             lo, hi = ratio_value * 0.5, None
         else:
             # EXCLUSIVE: unreachable through ratio_interval() itself while

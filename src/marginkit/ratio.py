@@ -584,10 +584,24 @@ def _fieller_shape(
     # B <= 0 cannot arise under dependence="independent" (B = theta_a*theta_b, and both values
     # are non-negative by Threshold's own invariant), so this is a defensive branch matching the
     # general algebra rather than a reachable v0.1 case.
-    if b_coef < 0.0:
+    if b_coef == 0.0:
+        # A == 0 and B == 0 degenerate the inequality to `K <= 0`, so K > 0 is an EMPTY
+        # confidence set -- not a half-line, and emphatically not the whole axis. Reporting
+        # UNBOUNDED there would be the least informative possible answer to an input that is
+        # actually contradictory, so it raises (hard constraint 3). Unreachable while
+        # dependence="independent" keeps B = theta_a*theta_b >= 0 (B == 0 forces theta_a == 0,
+        # hence K = -z^2*Va <= 0), but v0.2's paired covariance can reach it.
+        if k_coef > 0.0:
+            raise ValueError(
+                "ratio_interval: the Fieller confidence set is empty (A == 0, B == 0, "
+                f"K == {k_coef!r} > 0), which no IntervalShape can represent and which means "
+                "the inputs are mutually contradictory rather than merely uninformative"
+            )
+        note = "no finite half-line endpoint either (B == 0 too)"
+    elif b_coef < 0.0:
         note = f"rho <= {k_coef / (2.0 * b_coef)!r}"
     else:
-        note = "no finite half-line endpoint either (B == 0 too)"
+        note = f"rho >= {k_coef / (2.0 * b_coef)!r}"
     warning = (
         "ratio_interval: the Fieller quadratic's leading coefficient A is exactly 0 (g == 1); "
         f"the true confidence set is a half-line ({note}), which IntervalShape has no member "
@@ -620,7 +634,11 @@ def _log_delta_shape(
         )
     lo = estimate * math.exp(-half_width)
     hi = estimate * math.exp(half_width)
-    if not (math.isfinite(lo) and math.isfinite(hi)):
+    # `lo > 0.0` as well as finiteness: a half-width under _MAX_LOG_HALF_WIDTH can still
+    # underflow `lo` to exactly 0.0 for a small enough estimate, and 0.0 is "finite". Without
+    # this the failure surfaces from Ratio.__post_init__ as the log_delta lo > 0 invariant
+    # rather than as decisions/0020's explanation of what actually went wrong.
+    if not (math.isfinite(lo) and math.isfinite(hi) and lo > 0.0):
         raise ValueError(
             "ratio_interval: method='log_delta' produced a non-finite interval endpoint for "
             "this input; there is no defensible bounded interval to report"

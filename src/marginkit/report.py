@@ -34,8 +34,12 @@ release.
 
 ``load_schema`` reads the packaged ``schema/scorecard-v{version}.json`` with
 :mod:`importlib.resources` -- ``schema/scorecard-v1.json`` stays packaged alongside
-``scorecard-v2.json`` so a ``"1"``-tagged object's required-field set is checked against the
-schema it was actually written under. Nothing under ``src/`` imports ``jsonschema``; it stays a
+``scorecard-v2.json`` so a ``"1"``-tagged object's required-field set is checked against the v1
+document rather than the current one. **Caveat:** the packaged ``scorecard-v1.json`` is not
+byte-identical to the one ``v0.1.0a2`` shipped -- Phase 5 added ``Threshold.baseline`` and
+``.grid`` to it while ``schema_version`` was still ``"1"`` -- so "the schema it was written
+under" holds for the *current* v1 document, not for every card a ``"1"`` tag has ever described
+(`REVIEWS.md` R9). Nothing under ``src/`` imports ``jsonschema``; it stays a
 dev-only dependency used by consumers' own validators and by this package's own tests.
 """
 
@@ -258,9 +262,11 @@ def _schema_required_by_type(version: str = SCHEMA_VERSION) -> dict[str, frozens
     can never drift between the schema and ``from_dict`` without ``TestSchemaFieldParity`` (or
     this function's own malformed-schema check) catching it (round 4 section 3). Parametrised on
     ``version`` (rather than always reading the current schema) so a ``"1"``-tagged object read
-    through :func:`from_dict` is checked against the schema it was actually written under --
+    through :func:`from_dict` is checked against the v1 document rather than the current one --
     required fields happen to be identical between ``"1"`` and ``"2"`` today (`decisions/0022`
-    only widened an enum), but this does not assume that stays true.
+    only widened an enum), but this does not assume that stays true. Note the v1 document was
+    itself amended in place after ``v0.1.0a2`` was tagged (`REVIEWS.md` R9), so it is the current
+    v1 schema, not a frozen historical one.
     """
     schema = load_schema(version)
     root_required = schema.get("required")

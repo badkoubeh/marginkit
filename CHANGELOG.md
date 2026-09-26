@@ -93,7 +93,10 @@ B item 4). `decisions/0003` is what consumers pin against; a breaking change ins
 
 #### Unchanged
 - `Status` and `Censoring`, every result field name, every signature of an existing function, and
-  `schema/scorecard-v1.json` itself, which stays packaged for the reader path.
+  `schema/scorecard-v1.json`, which stays packaged for the reader path and is untouched *by this
+  release*. It is not a frozen historical artifact, though: Phase 5 added `Threshold.baseline` and
+  `.grid` to it while `schema_version` was still `"1"` (`REVIEWS.md` R9), so a consumer pinned to
+  `0.1.0a2` cannot validate a `0.1.0a3`-written card against the v1 schema it shipped with.
 - `IntervalShape.EXCLUSIVE` keeps its member and its `Ratio` invariants, but is **unreachable
   through `ratio_interval` in v0.1**: it needs same-signed roots with `A < 0`, hence `B <= 0`, hence
   a nonzero covariance term, which only `dependence="paired"` supplies in v0.2. Verified both

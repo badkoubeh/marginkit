@@ -302,7 +302,10 @@ def fake_ratio(
         ``BOUNDED`` when ``status`` is ``OK`` and ``censoring`` is ``NONE``, and means "no
         shape" (forced ``None``) otherwise. Passing an explicit shape together with a non-``OK``
         ``status`` or a non-``NONE`` ``censoring`` raises ``ValueError``, since that combination
-        can never be a valid ``Ratio``.
+        can never be a valid ``Ratio``. Every member is buildable, including
+        ``IntervalShape.EXCLUSIVE``, which a real :func:`~marginkit.ratio_interval` call cannot
+        produce while ``dependence="independent"`` (`decisions/0022`) but whose
+        :class:`~marginkit.Ratio` invariants still need a consumer-testable fixture.
     status
         The :class:`~marginkit.Status` to build.
     censoring
@@ -353,9 +356,18 @@ def fake_ratio(
             lo, hi = 0.3, 0.7
         elif resolved_shape is IntervalShape.UNBOUNDED:
             lo, hi = None, None
+        elif resolved_shape is IntervalShape.HALF_OPEN:
+            # [lo, inf): lo <= estimate is Ratio's own invariant (decisions/0022). This is the
+            # shape a real ratio_interval(method="fieller") call actually produces for roughly a
+            # quarter of reachable results (decisions/0022), unlike EXCLUSIVE below.
+            lo, hi = ratio_value * 0.5, None
         else:
-            # EXCLUSIVE: the point estimate sits on the near edge of the excluded gap, inside
-            # the (-inf, lo] ray of the Fieller confidence set.
+            # EXCLUSIVE: unreachable through ratio_interval() itself while
+            # dependence="independent" fixes the covariance term at 0 (decisions/0022), but
+            # Ratio's own invariants for it stay enforced against v0.2's dependence="paired",
+            # and this fake builds one directly so a consumer can still test against it. The
+            # point estimate sits on the near edge of the excluded gap, inside the (-inf, lo]
+            # ray of the Fieller confidence set.
             lo, hi = ratio_value, ratio_value + 1.0
 
     return Ratio(

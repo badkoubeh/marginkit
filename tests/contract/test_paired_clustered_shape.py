@@ -7,15 +7,24 @@ internal marginkit module is imported.
 
 A failing **live** test in this file means a breaking change to the public API marginbench
 depends on (plan section 3.3, ``docs/CONSUMERS.md``). **Do not edit a live test to make it
-pass.** Stop and ask; that failure is the signal a breaking change needs owner sign-off. The two
-``xfail`` tests below are different: they exercise API that does not exist yet (``threshold()``
-until Phase 5, ``dependence="paired"`` until v0.2 Phase 9). The first now fails with
-``TypeError``, not ``ImportError``: since Phase 4 added ``fit_dose_response``,
-``from marginkit import threshold`` no longer errors on import -- it binds the
-``marginkit.threshold`` submodule (imported as a side effect of ``marginkit/__init__.py``),
-which is not callable, so the ``TypeError`` comes from calling it. The second still imports
-``ratio_interval``, which genuinely does not exist as any attribute, so it still fails with
-``ImportError``.
+pass.** Stop and ask; that failure is the signal a breaking change needs owner sign-off.
+
+**``test_paired_ratio_between_two_thresholds_on_the_same_clustered_fit`` was still marked
+``xfail(strict=True, raises=ImportError)`` after ``ratio_interval`` started existing (Phase 6),
+and its premise had expired without anyone noticing** -- exactly the kind of drift a strict
+``xfail`` is supposed to catch, and did: ``threshold(fit, ...)`` at what is now line ~130 is
+called with no ``dependence=`` argument, and ``fit`` here carries cluster ids (the whole point of
+this file), so R2's guard (a method assuming independence must refuse clustered input unless the
+caller opts in explicitly) raises ``ValueError`` there, before the test ever reaches the
+``dependence="paired"`` call it exists to exercise. That is not the breaking change the module's
+own rule above warns against -- it is a stale ``xfail`` reason (written when ``threshold()``
+did not exist at all) outliving the code path it described, not a live contract regressing. The
+fix threads ``dependence="independent"`` through both ``threshold()`` calls (acknowledging
+independence is being assumed for *those* calls, same as any other caller with clustered data),
+which lets the test reach the actual ``ratio_interval(..., dependence="paired")`` call and assert
+what it always meant to: that a v0.2 feature requested early raises ``ValueError``, per
+``threshold()``'s own existing precedent for the same request and
+``tests/unit/test_ratio_interval_guards.py::TestPairedDependenceNotImplemented``.
 """
 
 from __future__ import annotations
@@ -103,15 +112,17 @@ def test_threshold_on_clustered_input_without_independent_dependence_raises() ->
         threshold(fit, definition=Definition.absolute(0.5), interval_method="profile", level=0.95)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=ImportError,
-    reason="v0.2 Phase 9: dependence='paired' does not exist until Phase 9",
-)
-def test_paired_ratio_between_two_thresholds_on_the_same_clustered_fit() -> None:
+def test_paired_ratio_between_two_thresholds_on_the_same_clustered_fit_is_not_implemented() -> None:
     """v0.2, plan D6/section 5.6: outcomes measured on the same inferences need
     ``dependence="paired"``, not ``"independent"``, because independence is the wrong
-    assumption for a shared-cluster design."""
+    assumption for a shared-cluster design -- not implemented until v0.2 Phase 9, so
+    ``ratio_interval`` must raise rather than silently falling back to treating the pair as
+    independent.
+
+    ``dependence="independent"`` is passed to both ``threshold()`` calls (module docstring):
+    R2's clustered-input guard would otherwise raise here, before ever reaching the
+    ``dependence="paired"`` call this test exists to check.
+    """
     from marginkit import Definition, fit_dose_response, ratio_interval, threshold
 
     severity, success, cluster = _clustered_rows()
@@ -124,9 +135,20 @@ def test_paired_ratio_between_two_thresholds_on_the_same_clustered_fit() -> None
         cluster=cluster,
     )
     fit = fit_dose_response(obs, model="binomial", link="probit", upper=1.0, lower=0.0)
-    t_a = threshold(fit, definition=Definition.absolute(0.5), interval_method="profile", level=0.95)
+    t_a = threshold(
+        fit,
+        definition=Definition.absolute(0.5),
+        interval_method="profile",
+        level=0.95,
+        dependence="independent",
+    )
     t_b = threshold(
-        fit, definition=Definition.baseline_fraction(0.5), interval_method="profile", level=0.95
+        fit,
+        definition=Definition.baseline_fraction(0.5),
+        interval_method="profile",
+        level=0.95,
+        dependence="independent",
     )
 
-    ratio_interval(t_a, t_b, method="fieller", dependence="paired")
+    with pytest.raises(ValueError):
+        ratio_interval(t_a, t_b, method="fieller", dependence="paired")

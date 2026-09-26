@@ -19,8 +19,6 @@ import inspect
 import json
 from inspect import Parameter
 
-import pytest
-
 from marginkit import Censoring, grid_break_point
 
 
@@ -134,7 +132,11 @@ def test_result_round_trips_through_json_with_string_censoring_and_schema_versio
 
     assert reloaded["censoring"] in ("NONE", "RIGHT")
     assert reloaded["censoring"] == "NONE"
-    assert reloaded["schema_version"] == "1"
+    # decisions/0022 bumped schema_version to "2" on every result type, GridBreakPoint
+    # included: one schema document means one version. zeta-bench is unaffected -- it unpacks
+    # grid_break_point to a plain (value, max_tested) tuple and never serialises this
+    # dataclass -- but this assertion is the contract for anyone who does.
+    assert reloaded["schema_version"] == "2"
 
 
 def test_right_censored_result_round_trips_through_json_too() -> None:
@@ -146,7 +148,7 @@ def test_right_censored_result_round_trips_through_json_too() -> None:
     reloaded = json.loads(dumped)
 
     assert reloaded["censoring"] == "RIGHT"
-    assert reloaded["schema_version"] == "1"
+    assert reloaded["schema_version"] == "2"  # decisions/0022, as above
 
 
 def test_criterion_is_keyword_only_and_signed_defaults_to_false() -> None:
@@ -309,29 +311,38 @@ def test_sac_sensor_noise_baseline_fraction_0_5_is_left_censored_at_0_01() -> No
     assert t.hi == 0.01
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=ImportError,
-    reason="Phase 6: ratio_interval does not exist until Phase 6",
-)
-def test_fieller_ratio_on_disjoint_pid_sensor_noise_halves_reports_an_interval_shape() -> None:
+def test_fieller_ratio_on_pid_sensor_noise_halves_propagates_separation() -> None:
     """Two thresholds fit on *disjoint* halves of the PID x sensor_noise counts, on the same
     axis and the same ``absolute(0.95)`` definition, combined with a Fieller interval.
 
+    **This fixture does not give two clean ``OK`` fits, and an earlier version of this docstring
+    was wrong to say it did.** The two halves are constructed so that, summed cell by cell, they
+    reproduce the fixture's own ``pid_sensor_noise`` counts (successes ``[200, 299, 122, 0]``
+    over trials ``[200, 300, 300, 300]``): half A is ``[100, 150, 61, 0]`` over
+    ``[100, 150, 150, 150]`` and half B is the complementary ``[100, 149, 61, 0]`` over
+    ``[100, 150, 150, 150]``, so the two fits genuinely share no observations -- but half A is
+    genuinely quasi-completely separated (confirmed: its likelihood is flat at its supremum from
+    ``s = 0.06`` down to ``s = 1e-8``, so no finite MLE exists there, and
+    ``decisions/0006``'s pre-fit separation rule is correct to say so). This is not repairable by
+    re-splitting: ``pid_sensor_noise`` has exactly one failure below its mixed level
+    (``299/300`` at ``0.01``), so *any* disjoint split leaves one half separated, and the only
+    other candidate series in the fixture, ``ppo_sensor_noise``, is separated as a whole series.
+
+    What this fixture is actually worth testing, then, is not "the OK/OK Fieller path" (see
+    ``test_fieller_ratio_on_two_constructed_ok_thresholds_reports_an_interval_shape`` below for
+    that) but that ``Status.SEPARATION`` on real, consumer-shaped zeta-bench data propagates
+    through ``ratio_interval`` exactly as ``decisions/0015`` requires: a flag, never a number
+    that merely happens to look plausible.
+
     ``dependence="independent"`` (plan section 5.6) is valid only when the two thresholds come
     from disjoint data, and must raise otherwise -- so this must not be two thresholds off one
-    fit, which would share every observation. The two halves below are constructed so that,
-    summed cell by cell, they reproduce the fixture's own ``pid_sensor_noise`` counts
-    (successes ``[200, 299, 122, 0]`` over trials ``[200, 300, 300, 300]``): half A is
-    ``[100, 150, 61, 0]`` over ``[100, 150, 150, 150]`` and half B is the complementary
-    ``[100, 149, 61, 0]`` over ``[100, 150, 150, 150]``, so the two fits genuinely share no
-    observations.
+    fit, which would share every observation.
     """
     from marginkit import (
         Axis,
         Definition,
-        IntervalShape,
         Observations,
+        Status,
         fit_dose_response,
         ratio_interval,
         threshold,
@@ -359,12 +370,71 @@ def test_fieller_ratio_on_disjoint_pid_sensor_noise_halves_reports_an_interval_s
 
     fit_a = fit_dose_response(half_a, model="binomial", link="probit", upper=1.0, lower=0.0)
     fit_b = fit_dose_response(half_b, model="binomial", link="probit", upper=1.0, lower=0.0)
+    assert fit_a.status is Status.SEPARATION
+    assert fit_b.status is Status.OK
     t_a = threshold(
         fit_a, definition=Definition.absolute(0.95), interval_method="profile", level=0.95
     )
     t_b = threshold(
         fit_b, definition=Definition.absolute(0.95), interval_method="profile", level=0.95
     )
+    assert t_a.status is Status.SEPARATION
+
+    r = ratio_interval(t_a, t_b, method="fieller", dependence="independent")
+
+    assert r.status is Status.SEPARATION
+    assert r.shape is None
+    assert r.estimate is None
+    assert r.lo is None
+    assert r.hi is None
+
+
+def test_fieller_ratio_on_two_constructed_ok_thresholds_reports_an_interval_shape() -> None:
+    """The OK/OK Fieller contract path: since ``pid_sensor_noise`` cannot supply two clean
+    ``OK`` fits from disjoint halves (see the test above), this covers the same shape-reporting
+    contract -- ``ratio_interval`` on two independent, converged ``Status.OK`` thresholds returns
+    some :class:`~marginkit.IntervalShape` -- from two small but genuinely non-separated,
+    non-shared datasets on the public API surface.
+    """
+    from marginkit import (
+        Axis,
+        Definition,
+        IntervalShape,
+        Observations,
+        Status,
+        fit_dose_response,
+        ratio_interval,
+        threshold,
+    )
+
+    axis = Axis(name="sensor_noise", unit="m", scale="log")
+    obs_a = Observations.from_counts(
+        axis,
+        severity=[0.0, 0.01, 0.05, 0.1],
+        successes=[100, 90, 60, 20],
+        trials=[100, 100, 100, 100],
+        outcome="success",
+        direction="decreasing",
+    )
+    obs_b = Observations.from_counts(
+        axis,
+        severity=[0.0, 0.02, 0.1, 0.2],
+        successes=[100, 85, 45, 10],
+        trials=[100, 100, 100, 100],
+        outcome="success",
+        direction="decreasing",
+    )
+    fit_a = fit_dose_response(obs_a, model="binomial", link="probit", upper=1.0, lower=0.0)
+    fit_b = fit_dose_response(obs_b, model="binomial", link="probit", upper=1.0, lower=0.0)
+    assert fit_a.status is Status.OK
+    assert fit_b.status is Status.OK
+    t_a = threshold(
+        fit_a, definition=Definition.absolute(0.5), interval_method="profile", level=0.95
+    )
+    t_b = threshold(
+        fit_b, definition=Definition.absolute(0.5), interval_method="profile", level=0.95
+    )
+    assert t_a.status is Status.OK and t_b.status is Status.OK
 
     r = ratio_interval(t_a, t_b, method="fieller", dependence="independent")
 

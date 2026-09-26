@@ -42,7 +42,13 @@ class TestStatusEnum:
 
 
 class TestIntervalShapeEnum:
-    """``IntervalShape`` is a ``StrEnum`` whose value equals its member name."""
+    """``IntervalShape`` is a ``StrEnum`` whose value equals its member name.
+
+    ``HALF_OPEN`` was added by `decisions/0022` (schema ``"2"``): a deliberate, decided
+    enum-membership change, not a drift to guard against -- this test's job is to catch an
+    *undecided* change to the set, and once one is decided, updating the pinned set is exactly
+    what keeps the test meaningful for the next one.
+    """
 
     def test_members_and_values(self) -> None:
         members = {member.name: member.value for member in IntervalShape}
@@ -51,6 +57,7 @@ class TestIntervalShapeEnum:
             "BOUNDED": "BOUNDED",
             "UNBOUNDED": "UNBOUNDED",
             "EXCLUSIVE": "EXCLUSIVE",
+            "HALF_OPEN": "HALF_OPEN",
         }
 
     def test_is_a_str_subclass_whose_serialised_form_is_the_bare_name(self) -> None:

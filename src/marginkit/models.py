@@ -11,8 +11,12 @@ slope, or an estimated asymptote pinned to a parameter-space boundary) is report
 be where the optimizer stopped (``decisions/0005``).
 
 **v1 is binomial-only.** ``model`` accepts only ``"binomial"``; a new model family (``"ll4"``,
-``"isotonic"``) is a v0.2 addition that requires ``schema_version`` ``"2"``, not a silent
-extension of this one.
+``"isotonic"``) is a v0.2 addition that requires bumping ``schema_version`` again, not a silent
+extension of the current one. ``schema_version`` is now ``"2"`` (`decisions/0022`, which spent it
+on :data:`~marginkit.IntervalShape.HALF_OPEN` rather than a model-family change), so the v0.2
+model-family addition anticipated here needs the bump *after* the current one. The number is
+deliberately not named: :data:`marginkit.report.SCHEMA_VERSION` is the single source, and every
+document that copied a predicted number went stale together when ``"2"`` was spent elsewhere.
 """
 
 from __future__ import annotations
@@ -329,9 +333,9 @@ class Fit:
     direction
         ``"decreasing"`` only, in this release (see above).
     model
-        The model family. Only ``"binomial"`` exists in v0.1 (schema ``"1"``); a new family
-        such as ``"ll4"`` or ``"isotonic"`` is a v0.2 addition requiring ``schema_version``
-        ``"2"``.
+        The model family. Only ``"binomial"`` exists in v0.1; a new family such as ``"ll4"`` or
+        ``"isotonic"`` is a v0.2 addition requiring a further ``schema_version`` bump (``"2"`` is
+        already spent, `decisions/0022`).
     link
         The link function: ``"probit"``, ``"logit"`` or ``"cloglog"`` for ``model="binomial"``.
         Required; the schema's ``link`` enum carries no ``null`` alternative, so this is a
@@ -368,7 +372,8 @@ class Fit:
         Free-text notes surfaced alongside the fit (for example, ``CONTROL_INCOMPATIBLE``
         carries a message suggesting ``upper="estimate"``). Empty by default.
     schema_version
-        The serialised-result schema version this object belongs to. Defaults to ``"1"``.
+        The serialised-result schema version this object belongs to. Defaults to ``"2"``
+        (`decisions/0022`); ``from_dict`` still reads a ``"1"`` card.
     provenance
         An opaque mapping the caller may attach to record where the inputs came from.
         marginkit stores it and never interprets it. Empty by default.
@@ -386,7 +391,7 @@ class Fit:
     status: Status
     cluster_ids: tuple[str | int, ...] | None = None
     warnings: tuple[str, ...] = ()
-    schema_version: str = "1"
+    schema_version: str = "2"
     provenance: Mapping[str, JSONValue] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

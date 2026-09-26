@@ -193,6 +193,57 @@ def solve_value(fit: Fit, *, target: float) -> tuple[float, float]:
     return theta_hat, _to_natural(theta_hat, scale=fit.axis.scale)
 
 
+def _theta_variance(fit: Fit, *, definition: Definition, target: float) -> float:
+    """``Var(theta)`` on the *transformed* axis (``log(severity)`` on a log axis, raw severity on
+    a linear one) -- the delta-method gradient assembly plan section 5.4 and this module's
+    docstring describe, factored out of :func:`delta_interval` so :mod:`marginkit.ratio` can
+    reuse the exact same computation for its Fieller and log-delta variance inputs (plan section
+    5.6) instead of reconstructing the gradient a second time, which would risk the two drifting
+    apart. Not converted to a natural-scale or log-scale standard error here -- callers each do
+    that conversion themselves, since Fieller and a single threshold's own delta interval need it
+    on different scales (:mod:`marginkit.ratio`'s module docstring).
+
+    Private: not part of the public API. Callable across modules (``marginkit.ratio`` imports it
+    directly) without being exported from either module's ``__all__``.
+
+    Parameters
+    ----------
+    fit
+        A ``status is Status.OK`` fit.
+    definition
+        The :class:`~marginkit.Definition` the threshold solves for (needed for ``d(q)/d(u)``
+        and ``d(q)/d(l)`` when an asymptote is estimated).
+    target
+        The already-resolved target performance.
+
+    Returns
+    -------
+    float
+        ``gradient @ covariance @ gradient``, not yet clamped to ``>= 0`` -- callers do that
+        (mirrors this module's own ``max(var_theta, 0.0)`` usage below).
+    """
+    assert fit.params is not None and fit.covariance is not None
+    upper = fit.params["upper"].value
+    lower = fit.params["lower"].value
+    z_star = _z_star(fit.link, upper=upper, lower=lower, target=target)
+    assert z_star is not None, "the caller must have already checked reachability"
+
+    names = fit.covariance.names
+    gradient_by_name = {"mu": 1.0, "s": z_star}
+    if "upper" in names or "lower" in names:
+        density = _link_density(z_star, fit.link)
+        dq_du, dq_dl = _dq_du_dl(definition, upper=upper, lower=lower)
+        s = fit.params["s"].value
+        if "upper" in names:
+            gradient_by_name["upper"] = s * dq_du / density
+        if "lower" in names:
+            gradient_by_name["lower"] = s * dq_dl / density
+
+    gradient = np.array([gradient_by_name[name] for name in names], dtype=np.float64)
+    matrix = np.array([[float(v) for v in row] for row in fit.covariance.matrix], dtype=np.float64)
+    return float(gradient @ matrix @ gradient)
+
+
 def _llf_hat(fit: Fit) -> float:
     assert fit.params is not None
     severity, successes, trials = _cells_to_arrays(fit.cells)
@@ -700,26 +751,7 @@ def delta_interval(
         ``censoring`` is always :data:`~marginkit.Censoring.NONE`: the delta method has no
         open-sided outcome.
     """
-    assert fit.params is not None and fit.covariance is not None
-    upper = fit.params["upper"].value
-    lower = fit.params["lower"].value
-    z_star = _z_star(fit.link, upper=upper, lower=lower, target=target)
-    assert z_star is not None, "the caller must have already checked reachability"
-
-    names = fit.covariance.names
-    gradient_by_name = {"mu": 1.0, "s": z_star}
-    if "upper" in names or "lower" in names:
-        density = _link_density(z_star, fit.link)
-        dq_du, dq_dl = _dq_du_dl(definition, upper=upper, lower=lower)
-        s = fit.params["s"].value
-        if "upper" in names:
-            gradient_by_name["upper"] = s * dq_du / density
-        if "lower" in names:
-            gradient_by_name["lower"] = s * dq_dl / density
-
-    gradient = np.array([gradient_by_name[name] for name in names], dtype=np.float64)
-    matrix = np.array([[float(v) for v in row] for row in fit.covariance.matrix], dtype=np.float64)
-    var_theta = float(gradient @ matrix @ gradient)
+    var_theta = _theta_variance(fit, definition=definition, target=target)
     sigma_theta = math.sqrt(max(var_theta, 0.0))
 
     sigma_log = sigma_theta if fit.axis.scale == "log" else sigma_theta / value

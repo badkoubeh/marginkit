@@ -11,10 +11,120 @@ satisfy the public-API change checklist in `docs/IMPLEMENTATION_PLAN.md` Appendi
 
 ## [Unreleased]
 
-Phases 4 and 5, to be tagged `v0.1.0a3`. Additive; upgrading from 0.1.0a2 needs no consumer
-change. The two phases share one version because `v0.1.0a3` was never tagged for Phase 4 on its
-own -- Phase 4 merged with `__version__` still at `0.1.0a2`, so retro-tagging that commit would
-ship a package reporting the wrong version.
+Phase 6, to be tagged `v0.1.0a4` once the `0.1.0a3` block below is tagged at Phase 5's merge
+commit.
+
+**This release is breaking, unlike 0.1.0a3.** `IntervalShape` gains a member and `schema_version`
+goes to `"2"` on every result type. Upgrading code needs no change to call existing functions, but
+**a reader must be upgraded before a writer**: every card written by 0.1.0a4 carries
+`schema_version="2"` and is rejected by a 0.1.0a2/0.1.0a3 reader, including a card whose contents
+are byte-identical to a v1 one. In the other direction 0.1.0a4 reads v1 cards unchanged (Appendix
+B item 4). `decisions/0003` is what consumers pin against; a breaking change inside an unreleased
+`0.1.0` pre-release series is what the alpha series exists for -- see **Open items**.
+
+### Phase 6 -- ratio intervals
+
+#### Added
+- `ratio_interval(t_a, t_b, /, *, method, dependence, level=None) -> Ratio`. The ratio of two
+  thresholds' severities with a Fieller interval on the natural severity scale
+  (`method="fieller"`) or a log-scale delta interval (`method="log_delta"`, which additionally
+  requires both axes `scale="log"` and both values `> 0`). `t_a`/`t_b` are positional-only.
+  `dependence` must be `"independent"`; `"paired"` raises, naming it v0.2 Phase 9 work. Both
+  methods use the normal quantile, never Student-t -- R `drc`'s `EDcomp(interval="fieller")` uses
+  `qt`, which is why its interval endpoints, but not its point estimates, differ from marginkit's
+  (`tests/reference/test_ratio_drc_edcomp.py`).
+- `level=None`, the default, inherits the confidence level from the two input thresholds, which
+  must agree; an explicit `level` that disagrees with either raises (`decisions/0016`). There is
+  still no defaulted confidence level anywhere in the public API.
+- Under `dependence="independent"`, `ratio_interval` raises when the two thresholds come from the
+  very same `Fit` object (identity, not value equality: two disjoint samples may legitimately
+  produce an equal `Fit` by value). Without it the ratio of a threshold with itself was reported
+  as `1.0 [0.888, 1.126]`, when it is identically 1 with zero variance -- wrong, not merely wide
+  (`decisions/0018` amendment). `Ratio` itself is **unchanged** and still constructs from two
+  thresholds sharing a `Fit`, exactly as in `0.1.0a2`.
+- `marginkit.testing.fake_ratio` can build every `IntervalShape` member, including `HALF_OPEN` and
+  the now-unreachable `EXCLUSIVE`.
+- `report.load_schema(version="2")` takes an optional version; `load_schema("1")` reads the schema
+  a pre-`0022` card was written under. `schema/scorecard-v2.json` is packaged alongside
+  `scorecard-v1.json`, which is unchanged.
+- Decisions `0015` (a censored or failed input threshold propagates a direction-aware
+  status/censoring flag and no numbers), `0016` (the level is inherited, not defaulted), `0017`
+  (the `A == 0` half-line, now partly superseded by `0022`), `0018` and its amendment (the
+  independence guard stays cluster-ids-only, plus the shared-`Fit` identity check), `0019` (a
+  Fieller root below zero is intersected with the positive parameter space), `0020` (a `log_delta`
+  interval too wide to exponentiate raises), `0021` (both roots negative is `UNBOUNDED`, narrowed
+  by `0022`) and `0022` (`HALF_OPEN` and the schema bump).
+
+#### Changed -- breaking
+- **`IntervalShape` gains `HALF_OPEN`**: `lo` set, `hi` is `None`, meaning `[lo, inf)`. **Code that
+  branches exhaustively on `shape` must handle it**, and this is the common new case, not an edge:
+  it is roughly a quarter of all reachable Fieller results (~24% measured over 200,000 draws,
+  `decisions/0022`). It replaces two previously-reported shapes: `A < 0` with `K > 0` reported
+  `EXCLUSIVE` with an impossible negative `lo`, and `A == 0` with `K > 0` reported `UNBOUNDED`,
+  discarding a real finite bound. `decisions/0017` had justified the latter on the case being
+  "measure-zero"; measuring it is what overturned that premise, and the argument is withdrawn in
+  that record.
+- **A set bounded above but not below stays `BOUNDED`**, reported as `[0, hi]`, because `0` is a
+  true lower bound for a severity ratio (`decisions/0019`). `HALF_OPEN` is therefore always
+  lower-bounded and never upper-bounded; the asymmetry is deliberate.
+- **`schema_version` is `"2"` on `GridBreakPoint`, `Fit`, `Threshold`, `Ratio` and `Scorecard`, and
+  `report.SCHEMA_VERSION` is `"2"`.** One schema document covers all five types, so one version
+  applies to all five; a `Fit` card tagged `"2"` may be byte-identical to a `"1"` one and is still
+  tagged `"2"`, because a reader of that card must understand v2 anyway -- a v2 `Ratio` can sit
+  beside it in the same `Scorecard`. **Migration: upgrade every reader to 0.1.0a4 before any writer
+  starts emitting.** `from_dict` accepts both `"1"` and `"2"` at every nesting level, preserves
+  whichever the card carried, and round-trips a v1 card unchanged.
+  - `GridBreakPoint` is the one bumped type with a live consumer. zeta-bench is unaffected in fact:
+    `robustness/cards.py` unpacks `grid_break_point` to a plain `(value, max_tested)` tuple and
+    never serialises the dataclass, so its regenerated card diff stays empty (verified against
+    `origin/main` = `975456a`). Any consumer that serialises a `GridBreakPoint` directly does see
+    `"2"` where it saw `"1"`.
+- **`report.load_schema()` with no argument now returns the v2 document** (`$id`
+  `urn:marginkit:schema:scorecard-v2`), not v1. v2 is a strict superset of v1 -- the only
+  substantive difference is the widened `IntervalShape` enum, and `schema_version` is unconstrained
+  in both -- so a consumer validating **stored v1 cards** with `load_schema()` is unaffected. A
+  consumer asserting on `$id` or `title` is not. Pass `load_schema("1")` for the old document.
+- `Ratio`'s `method="log_delta"` invariant is loosened from `shape=BOUNDED` to
+  `BOUNDED | HALF_OPEN`. Safe for code that constructs a `Ratio`; a card relying on it is readable
+  only by a marginkit at least as new as the writer.
+
+#### Unchanged
+- `Status` and `Censoring`, every result field name, every signature of an existing function, and
+  `schema/scorecard-v1.json` itself, which stays packaged for the reader path.
+- `IntervalShape.EXCLUSIVE` keeps its member and its `Ratio` invariants, but is **unreachable
+  through `ratio_interval` in v0.1**: it needs same-signed roots with `A < 0`, hence `B <= 0`, hence
+  a nonzero covariance term, which only `dependence="paired"` supplies in v0.2. Verified both
+  algebraically and over 200,000 draws (0 occurrences). It is retained rather than removed because
+  removing an enum member would need a deprecation shim, and because keeping it is what makes v2 a
+  strict superset of v1.
+
+#### Limitations
+- **`ratio_interval` does not verify independence.** Under `dependence="independent"` it raises on
+  input fits that share a `cluster_id`, and on two thresholds sharing one `Fit` object, and on
+  nothing else. Nothing in the package records an observation id, so two fits built from
+  overlapping rows that carry no cluster ids are accepted and produce a ratio whose stated coverage
+  is wrong. The check is necessary, not sufficient; establishing independence is the caller's
+  responsibility (`decisions/0018`, `REVIEWS.md` R6 #14, deferred to v0.2).
+- A consumer cannot distinguish `(0, inf)` from a half-line by `shape` alone in the `A == 0`,
+  `K <= 0` sub-case, which is still `UNBOUNDED` with the reason in `warnings` (`decisions/0017`,
+  `0021`).
+
+#### Open items
+- `CONSUMERS.md`'s change table says a breaking change takes a "minor bump while in 0.x", which
+  would read as `0.2.0`. `0.1.0` has never been released -- only the `a1` and `a2` pre-releases are
+  tagged -- so the whole `0.1.0aN` series is one unreleased minor, and a break between `a3` and
+  `a4` is what a pre-release series is for. Recorded as an open amendment to `decisions/0003`,
+  alongside the PEP 440 pre-release range question already open against it (`REVIEWS.md` R5 #5).
+- `EXCLUSIVE` is dead surface until `dependence="paired"` lands. Should Phase 9 be the point at
+  which its reachability is re-asserted by a test, rather than left to be noticed?
+
+## [0.1.0a3] -- unreleased
+
+Phases 4 and 5, to be tagged `v0.1.0a3` at Phase 5's merge commit, which carries
+`__version__ = "0.1.0a3"`. Additive; upgrading from 0.1.0a2 needs no consumer change. The two
+phases share one version because `v0.1.0a3` was never tagged for Phase 4 on its own -- Phase 4
+merged with `__version__` still at `0.1.0a2`, so retro-tagging that commit would ship a package
+reporting the wrong version.
 
 ### Phase 4 -- dose-response fitting
 

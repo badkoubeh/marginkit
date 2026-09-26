@@ -64,7 +64,7 @@ class GridBreakPoint:
         produces ``LEFT``, ``OPEN_UPPER``, or ``OPEN_LOWER``.
     schema_version
         The version of the serialised result schema this object belongs to. Defaults to
-        ``"1"``.
+        ``"2"`` (`decisions/0022`); ``from_dict`` still reads a ``"1"`` card.
     provenance
         An opaque mapping the caller may attach (for example with :func:`dataclasses.replace`)
         to record where the inputs came from. marginkit stores it and never interprets it.
@@ -74,7 +74,7 @@ class GridBreakPoint:
     value: float | None
     max_tested: float
     censoring: Censoring
-    schema_version: str = "1"
+    schema_version: str = "2"
     provenance: Mapping[str, object] = field(default_factory=dict)
 
 

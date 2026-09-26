@@ -22,12 +22,25 @@ the field, the enclosing card's ``marginkit_version``, and this reader's version
 ``Scorecard``) gets a plainer message with no version context, since there is no card to name.
 A key that a tagged type's schema ``required`` list requires but the dict omits raises; a key
 the schema does not require, if omitted, is filled from the dataclass's own default. This
-required-key set is read from the packaged schema itself (:data:`load_schema`), not duplicated
-as a literal list, so it cannot drift from ``schema/scorecard-v1.json``.
+required-key set is read from the packaged schema matching the dict's own ``schema_version``
+(:data:`load_schema`), not duplicated as a literal list, so it cannot drift from
+``schema/scorecard-v{version}.json``.
 
-``load_schema`` reads the packaged ``schema/scorecard-v1.json`` with :mod:`importlib.resources`.
-Nothing under ``src/`` imports ``jsonschema``; it stays a dev-only dependency used by consumers'
-own validators and by this package's own tests.
+``SCHEMA_VERSION`` is ``"2"`` as of `decisions/0022` (:class:`~marginkit.IntervalShape` gained
+``HALF_OPEN``). ``from_dict`` also still reads a ``"1"`` card (Appendix B item 4): both
+``"1"`` and ``"2"`` are accepted ``schema_version`` values, and a freshly-constructed result
+carries whatever its dataclass field defaults to, which is ``"2"`` everywhere as of this
+release.
+
+``load_schema`` reads the packaged ``schema/scorecard-v{version}.json`` with
+:mod:`importlib.resources` -- ``schema/scorecard-v1.json`` stays packaged alongside
+``scorecard-v2.json`` so a ``"1"``-tagged object's required-field set is checked against the v1
+document rather than the current one. **Caveat:** the packaged ``scorecard-v1.json`` is not
+byte-identical to the one ``v0.1.0a2`` shipped -- Phase 5 added ``Threshold.baseline`` and
+``.grid`` to it while ``schema_version`` was still ``"1"`` -- so "the schema it was written
+under" holds for the *current* v1 document, not for every card a ``"1"`` tag has ever described
+(`REVIEWS.md` R9). Nothing under ``src/`` imports ``jsonschema``; it stays a
+dev-only dependency used by consumers' own validators and by this package's own tests.
 """
 
 from __future__ import annotations
@@ -50,7 +63,13 @@ from marginkit.types import Axis, Cell, Censoring, Definition, IntervalShape, JS
 
 __all__ = ["SCHEMA_VERSION", "Scorecard", "from_dict", "load_schema", "to_dict"]
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
+
+# Appendix B item 4: `from_dict` must still read the previous schema version after a bump.
+# `"1"` predates `decisions/0022` (no `IntervalShape.HALF_OPEN`); `"2"` is current. A future bump
+# extends this set and drops the oldest entry only when that version's reader support is
+# deliberately retired, not silently.
+_SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset({"1", "2"})
 
 
 def _default_created_at() -> str:
@@ -87,14 +106,15 @@ class Scorecard:
         The version of marginkit that produced this scorecard. Defaults to
         :data:`marginkit.__version__` at construction time.
     schema_version
-        The serialised-result schema version this object belongs to. Defaults to ``"1"``.
+        The serialised-result schema version this object belongs to. Defaults to ``"2"``
+        (`decisions/0022`); ``from_dict`` still reads a ``"1"`` card.
     """
 
     results: tuple[GridBreakPoint | Fit | Threshold | Ratio, ...]
     provenance: Mapping[str, JSONValue] = field(default_factory=dict)
     created_at: str = field(default_factory=_default_created_at)
     marginkit_version: str = field(default_factory=_default_marginkit_version)
-    schema_version: str = "1"
+    schema_version: str = "2"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "results", tuple(self.results))
@@ -231,24 +251,32 @@ def to_dict(obj: object) -> dict[str, JSONValue]:
 # --------------------------------------------------------------------------------------------
 
 
-@lru_cache(maxsize=1)
-def _schema_required_by_type() -> dict[str, frozenset[str]]:
-    """The packaged schema's own ``required`` list for each of the five tagged result types
-    (:class:`Scorecard`, :class:`~marginkit.GridBreakPoint`, :class:`~marginkit.Fit`,
-    :class:`~marginkit.Threshold`, :class:`~marginkit.Ratio`), keyed by class name, with
-    ``"type"`` removed -- ``from_dict`` checks ``"type"`` itself, separately.
+@lru_cache(maxsize=8)  # generous headroom for however many schema versions are ever supported
+def _schema_required_by_type(version: str = SCHEMA_VERSION) -> dict[str, frozenset[str]]:
+    """The packaged ``version`` schema's own ``required`` list for each of the five tagged
+    result types (:class:`Scorecard`, :class:`~marginkit.GridBreakPoint`,
+    :class:`~marginkit.Fit`, :class:`~marginkit.Threshold`, :class:`~marginkit.Ratio`), keyed by
+    class name, with ``"type"`` removed -- ``from_dict`` checks ``"type"`` itself, separately.
 
     Read from :func:`load_schema` rather than duplicated as a literal list, so a required field
     can never drift between the schema and ``from_dict`` without ``TestSchemaFieldParity`` (or
-    this function's own malformed-schema check) catching it (round 4 section 3).
+    this function's own malformed-schema check) catching it (round 4 section 3). Parametrised on
+    ``version`` (rather than always reading the current schema) so a ``"1"``-tagged object read
+    through :func:`from_dict` is checked against the v1 document rather than the current one --
+    required fields happen to be identical between ``"1"`` and ``"2"`` today (`decisions/0022`
+    only widened an enum), but this does not assume that stays true. Note the v1 document was
+    itself amended in place after ``v0.1.0a2`` was tagged (`REVIEWS.md` R9), so it is the current
+    v1 schema, not a frozen historical one.
     """
-    schema = load_schema()
+    schema = load_schema(version)
     root_required = schema.get("required")
     if not isinstance(root_required, list):
-        raise TypeError("marginkit's packaged schema is malformed: missing root 'required'")
+        raise TypeError(
+            f"marginkit's packaged schema v{version} is malformed: missing root 'required'"
+        )
     defs = schema.get("$defs")
     if not isinstance(defs, dict):
-        raise TypeError("marginkit's packaged schema is malformed: missing '$defs'")
+        raise TypeError(f"marginkit's packaged schema v{version} is malformed: missing '$defs'")
 
     result: dict[str, frozenset[str]] = {
         "Scorecard": frozenset(str(k) for k in root_required if k != "type")
@@ -256,11 +284,14 @@ def _schema_required_by_type() -> dict[str, frozenset[str]]:
     for name in ("GridBreakPoint", "Fit", "Threshold", "Ratio"):
         node = defs.get(name)
         if not isinstance(node, dict):
-            raise TypeError(f"marginkit's packaged schema is malformed: missing '$defs.{name}'")
+            raise TypeError(
+                f"marginkit's packaged schema v{version} is malformed: missing '$defs.{name}'"
+            )
         node_required = node.get("required")
         if not isinstance(node_required, list):
             raise TypeError(
-                f"marginkit's packaged schema is malformed: missing '$defs.{name}.required'"
+                f"marginkit's packaged schema v{version} is malformed: missing "
+                f"'$defs.{name}.required'"
             )
         result[name] = frozenset(str(k) for k in node_required if k != "type")
     return result
@@ -274,7 +305,9 @@ def _validated_fields(
     present.
 
     ``schema_version`` is checked before the unknown-field check, so an unsupported version is
-    reported on its own even when the dict also carries an unknown key. ``card_version`` is the
+    reported on its own even when the dict also carries an unknown key -- against
+    :data:`_SUPPORTED_SCHEMA_VERSIONS`, not just the current :data:`SCHEMA_VERSION` (Appendix B
+    item 4: a card written under the previous version must still read). ``card_version`` is the
     ``marginkit_version`` of the enclosing :class:`Scorecard`, threaded down from
     :func:`from_dict` for every object nested inside one; when it is not ``None``, an
     unknown-field error names it (and this reader's version) alongside the field. A bare
@@ -282,12 +315,12 @@ def _validated_fields(
     gets a plainer message, since there is no card to name.
 
     For one of the five tagged result types, a field is required exactly when the packaged
-    schema's own ``required`` list says so (:func:`_schema_required_by_type`); for an untagged
-    helper type (:class:`~marginkit.Axis`, :class:`~marginkit.Definition`,
-    :class:`~marginkit.Cell`, :class:`~marginkit.Parameter`, :class:`~marginkit.Covariance`), a
-    field is required exactly when its dataclass field has no default. A required field missing
-    from ``data`` raises ``ValueError``; every other missing field is simply omitted here, so
-    the constructor applies its own default.
+    schema matching the dict's own ``schema_version`` says so
+    (:func:`_schema_required_by_type`); for an untagged helper type (:class:`~marginkit.Axis`,
+    :class:`~marginkit.Definition`, :class:`~marginkit.Cell`, :class:`~marginkit.Parameter`,
+    :class:`~marginkit.Covariance`), a field is required exactly when its dataclass field has no
+    default. A required field missing from ``data`` raises ``ValueError``; every other missing
+    field is simply omitted here, so the constructor applies its own default.
     """
     if not isinstance(data, Mapping):
         raise ValueError(
@@ -298,12 +331,13 @@ def _validated_fields(
     field_names = {f.name for f in fields}
     allowed = field_names | ({"type"} if tagged else set())
 
+    schema_version = SCHEMA_VERSION
     if "schema_version" in field_names:
         schema_version = data.get("schema_version", SCHEMA_VERSION)
-        if schema_version != SCHEMA_VERSION:
+        if schema_version not in _SUPPORTED_SCHEMA_VERSIONS:
             raise ValueError(
                 f"from_dict: unknown schema_version {schema_version!r} for {cls.__name__}, "
-                f"expected {SCHEMA_VERSION!r}"
+                f"expected one of {sorted(_SUPPORTED_SCHEMA_VERSIONS)!r}"
             )
 
     unknown = set(data) - allowed
@@ -318,7 +352,7 @@ def _validated_fields(
         raise ValueError(f"from_dict: unknown field(s) {sorted(unknown)} for {cls.__name__}")
 
     required = (
-        _schema_required_by_type()[cls.__name__]
+        _schema_required_by_type(schema_version)[cls.__name__]
         if tagged
         else frozenset(
             f.name
@@ -493,14 +527,16 @@ def from_dict(data: object) -> object:
     -------
     object
         An instance of the type named by ``data["type"]``. ``from_dict(to_dict(x)) == x`` for
-        every ``x`` of these five types.
+        every ``x`` of these five types. A ``schema_version`` ``"1"`` card (written before
+        `decisions/0022`) round-trips too: ``"1"`` and ``"2"`` are both accepted (Appendix B
+        item 4), and a ``"1"`` card's own ``Ratio.shape`` was never ``HALF_OPEN``.
 
     Raises
     ------
     ValueError
         If ``"type"`` is missing or unrecognised, if ``schema_version`` (at any nesting level)
-        is not :data:`SCHEMA_VERSION`, if a field (at any nesting level) is not recognised, or
-        if a required field is missing.
+        is not one of :data:`_SUPPORTED_SCHEMA_VERSIONS`, if a field (at any nesting level) is
+        not recognised, or if a required field is missing.
     """
     return _from_dict_impl(data, card_version=None)
 
@@ -510,22 +546,36 @@ def from_dict(data: object) -> object:
 # --------------------------------------------------------------------------------------------
 
 
-def load_schema() -> dict[str, object]:
-    """Load the packaged v1 score-card JSON Schema (draft 2020-12).
+def load_schema(version: str = SCHEMA_VERSION) -> dict[str, object]:
+    """Load a packaged score-card JSON Schema (draft 2020-12).
 
-    Reads ``schema/scorecard-v1.json`` from inside the installed ``marginkit`` package using
-    :mod:`importlib.resources`, so it works the same way from a wheel as from a source
+    Reads ``schema/scorecard-v{version}.json`` from inside the installed ``marginkit`` package
+    using :mod:`importlib.resources`, so it works the same way from a wheel as from a source
     checkout. ``jsonschema`` itself is never imported here or anywhere under ``src/``; it is a
     dev-only dependency for consumers that want to validate against the schema.
+
+    Parameters
+    ----------
+    version
+        Which packaged schema version to load. Defaults to :data:`SCHEMA_VERSION` (the current
+        one, ``"2"`` as of `decisions/0022`); ``"1"`` is also packaged, so
+        ``load_schema("1")`` reads the schema a card written before `decisions/0022` was
+        actually validated against.
 
     Returns
     -------
     dict[str, object]
         The parsed JSON Schema document.
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``version`` names a schema that is not packaged (only :data:`_SUPPORTED_SCHEMA_VERSIONS`
+        are).
     """
     text = (
         resources.files("marginkit")
-        .joinpath("schema", "scorecard-v1.json")
+        .joinpath("schema", f"scorecard-v{version}.json")
         .read_text(encoding="utf-8")
     )
     schema: dict[str, object] = json.loads(text)

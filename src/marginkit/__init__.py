@@ -17,9 +17,10 @@ as submodules but are not re-exported here.
 As of ``0.1.0a3`` this release adds :func:`threshold`, which solves for the severity at which
 a fitted curve crosses a target performance and attaches an interval or an explicit censoring
 label (plan §5.3-§5.5), together with :class:`BaselineRate`, :class:`ExactRates` and
-:func:`per_cell_clopper_pearson`. Computing a ratio interval is still **not part of this
-release**: there is no ``ratio_interval`` yet, only the :class:`Ratio` type it will return. It
-arrives in Phase 6.
+:func:`per_cell_clopper_pearson`.
+
+As of ``0.1.0a4`` this release adds :func:`ratio_interval`, which solves for the ratio of two
+thresholds' severities with a Fieller or log-delta confidence interval (plan §5.6).
 
 Note that ``marginkit.threshold`` is now the *function*, not the submodule.
 """
@@ -34,7 +35,7 @@ from marginkit.empirical import (
     per_cell_clopper_pearson,
 )
 from marginkit.models import Covariance, Fit, Parameter, Prediction, fit_dose_response
-from marginkit.ratio import Ratio
+from marginkit.ratio import Ratio, ratio_interval
 from marginkit.report import Scorecard
 from marginkit.threshold import Threshold, threshold
 from marginkit.types import (
@@ -47,7 +48,7 @@ from marginkit.types import (
     Status,
 )
 
-__version__ = "0.1.0a3"
+__version__ = "0.1.0a4"
 
 __all__ = [
     "Axis",
@@ -71,5 +72,6 @@ __all__ = [
     "fit_dose_response",
     "grid_break_point",
     "per_cell_clopper_pearson",
+    "ratio_interval",
     "threshold",
 ]

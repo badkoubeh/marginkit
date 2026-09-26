@@ -130,18 +130,36 @@ class IntervalShape(StrEnum):
     Attributes
     ----------
     BOUNDED
-        The usual case: ``[lo, hi]``, a single closed interval.
+        The usual case: ``[lo, hi]``, a single closed interval. Also covers a Fieller set bounded
+        above but not below on its own: intersected with the positive parameter space that is
+        ``[0, hi]``, and ``0`` is a true lower bound for a severity ratio (`decisions/0019`), so
+        ``BOUNDED`` -- never ``HALF_OPEN`` -- is reported (`decisions/0022`: "the upper-only
+        geometry stays ``BOUNDED``"). ``HALF_OPEN`` is therefore always lower-bounded, never
+        upper-bounded, and that asymmetry is deliberate.
     UNBOUNDED
-        The denominator's uncertainty is large enough that the interval is the whole real line;
-        ``lo`` and ``hi`` are both ``None``.
+        The confidence set, intersected with the positive parameter space, is the whole of
+        ``(0, inf)``; ``lo`` and ``hi`` are both ``None``.
     EXCLUSIVE
-        Two disjoint rays, ``(-inf, lo] union [hi, inf)``. The ratio's true value is excluded
-        from ``(lo, hi)``, not contained in it. Never clipped to look like ``BOUNDED``.
+        Two disjoint rays, ``(-inf, lo] union [hi, inf)``, with both ``lo`` and ``hi`` on the
+        same side of zero (both negative is `decisions/0021`'s ``UNBOUNDED`` case; a positive
+        ``lo`` never arises under ``dependence="independent"``, `decisions/0022`). **Unreachable
+        in v0.1**: under ``dependence="independent"`` the covariance term is 0, which forces
+        opposite-signed roots whenever this branch's other conditions hold, so the real result is
+        always ``HALF_OPEN`` instead (`decisions/0022`). The member and :class:`~marginkit.Ratio`'s
+        invariants for it stay enforced against v0.2's ``dependence="paired"``, which can make the
+        covariance term nonzero and reach this shape for the first time.
+    HALF_OPEN
+        One ray, ``[lo, inf)``: ``lo`` is set, ``hi`` is ``None``. This is what plan §5.6's
+        original two-ray ``EXCLUSIVE`` case actually is once intersected with the positive
+        parameter space. It arises whenever the denominator threshold is poorly determined
+        (``z^2*Vb > theta_b^2``) while the numerator is not -- an open region of the parameter
+        space, not the measure-zero boundary `decisions/0017` assumed (`decisions/0022`).
     """
 
     BOUNDED = "BOUNDED"
     UNBOUNDED = "UNBOUNDED"
     EXCLUSIVE = "EXCLUSIVE"
+    HALF_OPEN = "HALF_OPEN"
 
 
 _VALID_SCALES = frozenset({"log", "linear"})

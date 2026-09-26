@@ -130,20 +130,29 @@ jobs:
         run: |
           python - <<'PY'
           import glob
+          import pathlib
           import tarfile
           import zipfile
 
           wheel = glob.glob("dist/*.whl")[0]
           names = zipfile.ZipFile(wheel).namelist()
           assert "marginkit/py.typed" in names, f"py.typed missing from {wheel}: {names}"
-          # load_schema() reads this at runtime; a wheel without it breaks every consumer
-          # that validates a score card, with no error until that call.
-          schema = "marginkit/schema/scorecard-v1.json"
-          assert schema in names, f"{schema} missing from {wheel}: {names}"
+          # load_schema(version) reads these at runtime; a wheel without one breaks every
+          # consumer that validates a score card, with no error until that call. Derived from the
+          # source tree rather than hardcoded, so a schema_version bump (decisions/0022 added v2)
+          # cannot leave this check silently behind -- CLAUDE.md, on second copies of a rule.
+          expected_schemas = sorted(
+              f"marginkit/schema/{p.name}"
+              for p in pathlib.Path("src/marginkit/schema").glob("scorecard-v*.json")
+          )
+          assert expected_schemas, "no scorecard-v*.json found in src/marginkit/schema"
+          for schema in expected_schemas:
+              assert schema in names, f"{schema} missing from {wheel}: {names}"
 
           sdist = glob.glob("dist/*.tar.gz")[0]
           members = tarfile.open(sdist).getnames()
           assert any(n.endswith("/LICENSE") for n in members), f"LICENSE missing from {sdist}"
 
-          print("py.typed and scorecard-v1.json present in wheel; LICENSE present in sdist")
+          print(f"py.typed and {len(expected_schemas)} schema file(s) present in wheel "
+                f"({', '.join(expected_schemas)}); LICENSE present in sdist")
           PY

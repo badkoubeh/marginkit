@@ -138,7 +138,8 @@ class Threshold:
     warnings
         Free-text notes surfaced alongside the threshold. Empty by default.
     schema_version
-        The serialised-result schema version this object belongs to. Defaults to ``"1"``.
+        The serialised-result schema version this object belongs to. Defaults to ``"2"``
+        (`decisions/0022`); ``from_dict`` still reads a ``"1"`` card.
     provenance
         An opaque mapping the caller may attach to record where the inputs came from.
         marginkit stores it and never interprets it. Empty by default.
@@ -165,7 +166,7 @@ class Threshold:
     dependence: str
     fit: Fit
     warnings: tuple[str, ...] = ()
-    schema_version: str = "1"
+    schema_version: str = "2"
     provenance: Mapping[str, JSONValue] = field(default_factory=dict)
     baseline: BaselineRate | None = None
     grid: GridBreakPoint | None = None

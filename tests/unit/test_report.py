@@ -562,15 +562,19 @@ class TestFromDictRequiredKeyParityWithSchema:
 
 class TestFromDictChecksSchemaVersionBeforeUnknownFields:
     def test_wrong_schema_version_with_an_extra_key_names_the_version(self) -> None:
+        # decisions/0022 made "2" a real, supported schema_version (SCHEMA_VERSION itself), so a
+        # genuinely-unrecognised version needs a number outside _SUPPORTED_SCHEMA_VERSIONS --
+        # "999" matches TestUnknownSchemaVersion's own choice elsewhere in this file, rather than
+        # picking a value that was wrong only by coincidence of when this test was written.
         card = Scorecard(results=(_grid_result(),), provenance={})
         payload = to_dict(card)
-        payload["schema_version"] = "2"
+        payload["schema_version"] = "999"
         payload["not_a_real_field"] = 1
 
         with pytest.raises(ValueError) as exc_info:
             from_dict(payload)
 
-        assert "2" in str(exc_info.value)
+        assert "999" in str(exc_info.value)
 
 
 class TestFromDictNestedUnknownFieldNamesFieldAndBothVersions:

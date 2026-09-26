@@ -31,9 +31,9 @@ space -- ``lo = 0.0``, ``shape`` stays ``BOUNDED``, the unclipped root goes in `
 (`decisions/0019`); an ``EXCLUSIVE``-candidate set whose two roots are both negative is exactly
 the whole positive axis, not a two-ray set to clip -- reported as ``UNBOUNDED``
 (`decisions/0021`); a ``log_delta`` interval too wide to exponentiate raises rather than
-inventing a shape ``Ratio`` has no member for (`decisions/0020`); and, settling what turned out
-to be the common case rather than the rare one measured at ~24% of reachable results,
-``IntervalShape`` gains ``HALF_OPEN`` for the Fieller half-line that `decisions/0017`'s
+inventing a shape ``Ratio`` has no member for (`decisions/0020`); and, settling a case that turned
+out to occupy an open region of the parameter space rather than the measure-zero boundary it was
+taken for, ``IntervalShape`` gains ``HALF_OPEN`` for the Fieller half-line that `decisions/0017`'s
 ``A == 0`` boundary and `decisions/0021`'s ``EXCLUSIVE``-candidate branch each turn out to
 produce when ``K > 0`` -- superseding `0017` in part, narrowing `0021`, and moving
 ``schema_version`` to ``"2"`` (`decisions/0022`; the ``dependence="independent"`` guard's
@@ -119,8 +119,9 @@ class Ratio:
         - ``HALF_OPEN``: ``lo`` set, ``hi`` is ``None``, meaning ``[lo, inf)``, and
           ``lo <= estimate``. ``method="log_delta"`` additionally requires ``lo > 0``, as for
           ``BOUNDED``. This is what plan section 5.6's original two-ray case actually is once
-          intersected with the positive parameter space -- ~24% of reachable Fieller results,
-          not a rare case (`decisions/0022`).
+          intersected with the positive parameter space: an open region of the parameter space,
+          reached whenever the denominator is poorly determined and the numerator is not, not the
+          measure-zero boundary it was taken for (`decisions/0022`).
 
         Both ``None`` otherwise.
     shape
@@ -459,9 +460,9 @@ def _fieller_shape(
     ``warnings``, ``shape`` stays ``BOUNDED`` (`decisions/0019`; the upper-only geometry never
     becomes ``HALF_OPEN``, `decisions/0022`).
 
-    ``A < 0`` with a positive discriminant: under independence ``B = theta_a*theta_b > 0``, so
-    the roots' product (``K/A``) and sum (``2*B/A``) pin down exactly two outcomes, measured at
-    ~24%/0.2% of reachable results respectively (`decisions/0022`):
+    ``A < 0`` with a positive discriminant: ``K > 0`` implies ``theta_a > 0`` and hence
+    ``B = theta_a*theta_b > 0`` under independence, so the roots' product (``K/A``) and sum
+    (``2*B/A``) pin down exactly two outcomes (`decisions/0022`):
 
     - ``K > 0``: the roots are opposite-signed (product ``< 0``), so intersected with the
       positive axis the set is exactly ``[hi, inf)`` -- ``HALF_OPEN`` with ``lo`` set to the
@@ -590,7 +591,7 @@ def _fieller_shape(
     warning = (
         "ratio_interval: the Fieller quadratic's leading coefficient A is exactly 0 (g == 1); "
         f"the true confidence set is a half-line ({note}), which IntervalShape has no member "
-        "for in this direction -- reporting the weaker superset shape=UNBOUNDED rather than "
+        "for in this direction -- reporting shape=UNBOUNDED, which is exact here rather than "
         "clipping it to look bounded (decisions/0017)"
     )
     return IntervalShape.UNBOUNDED, None, None, (warning,)
@@ -712,11 +713,13 @@ def ratio_interval(
     ``IntervalShape.EXCLUSIVE`` is **unreachable** through this function while
     ``dependence="independent"`` (`decisions/0022`): plan section 5.6's original "two rays"
     case turns out, once intersected with the positive parameter space, to always be either the
-    half-line ``[hi, inf)`` (reported as ``IntervalShape.HALF_OPEN``, ~24% of reachable Fieller
-    results) or the whole positive axis (``UNBOUNDED``, `decisions/0021`) -- never a genuine
-    two-ray exclusion, which needs a nonzero covariance term that only v0.2's
-    ``dependence="paired"`` can supply. ``EXCLUSIVE``'s :class:`Ratio` invariants stay enforced
-    against that future, but no call through this function reaches them today.
+    half-line ``[hi, inf)`` (reported as ``IntervalShape.HALF_OPEN``; an open region of the
+    parameter space, not a measure-zero boundary -- how often it occurs is a property of the
+    design's power, `decisions/0022`) or the whole positive axis (``UNBOUNDED``,
+    `decisions/0021`) -- never a genuine two-ray exclusion, which needs a nonzero covariance
+    term that only v0.2's ``dependence="paired"`` can supply. ``EXCLUSIVE``'s :class:`Ratio`
+    invariants stay enforced against that future, but no call through this function reaches them
+    today.
 
     Parameters
     ----------

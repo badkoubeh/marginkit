@@ -151,8 +151,9 @@ class IntervalShape(StrEnum):
     HALF_OPEN
         One ray, ``[lo, inf)``: ``lo`` is set, ``hi`` is ``None``. This is what plan §5.6's
         original two-ray ``EXCLUSIVE`` case actually is once intersected with the positive
-        parameter space -- measured at ~24% of reachable Fieller results, not the rare case
-        `decisions/0017` assumed (`decisions/0022`).
+        parameter space. It arises whenever the denominator threshold is poorly determined
+        (``z^2*Vb > theta_b^2``) while the numerator is not -- an open region of the parameter
+        space, not the measure-zero boundary `decisions/0017` assumed (`decisions/0022`).
     """
 
     BOUNDED = "BOUNDED"

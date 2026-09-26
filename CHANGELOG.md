@@ -57,13 +57,16 @@ B item 4). `decisions/0003` is what consumers pin against; a breaking change ins
 
 #### Changed -- breaking
 - **`IntervalShape` gains `HALF_OPEN`**: `lo` set, `hi` is `None`, meaning `[lo, inf)`. **Code that
-  branches exhaustively on `shape` must handle it**, and this is the common new case, not an edge:
-  it is roughly a quarter of all reachable Fieller results (~24% measured over 200,000 draws,
-  `decisions/0022`). It replaces two previously-reported shapes: `A < 0` with `K > 0` reported
+  branches exhaustively on `shape` must handle it.** It occupies an **open region** of the parameter
+  space -- reached whenever the denominator threshold is poorly determined (`z^2*Vb > theta_b^2`) and
+  the numerator is not -- rather than the measure-zero boundary `decisions/0017` took it for. How
+  often it occurs is a property of a design's power, not a fixed rate: `decisions/0022` records the
+  `p(1-p)` relationship and why an earlier "~24%" figure was withdrawn as a justification. It
+  replaces two previously-reported shapes: `A < 0` with `K > 0` reported
   `EXCLUSIVE` with an impossible negative `lo`, and `A == 0` with `K > 0` reported `UNBOUNDED`,
   discarding a real finite bound. `decisions/0017` had justified the latter on the case being
-  "measure-zero"; measuring it is what overturned that premise, and the argument is withdrawn in
-  that record.
+  "measure-zero", which is true of `g == 1` exactly but not of the open region beside it; that
+  argument is withdrawn in the record.
 - **A set bounded above but not below stays `BOUNDED`**, reported as `[0, hi]`, because `0` is a
   true lower bound for a severity ratio (`decisions/0019`). `HALF_OPEN` is therefore always
   lower-bounded and never upper-bounded; the asymmetry is deliberate.

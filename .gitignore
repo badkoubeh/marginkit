@@ -19,10 +19,12 @@
 # committed so GitHub Actions runs (owner decision 2026-09-12, resolving review R4
 # option 1). `.github/*` rather than `.github/` — git cannot re-include a path
 # whose parent directory is excluded. CODEOWNERS is committed too, so GitHub can
-# request the code owner's review on every PR.
+# request the code owner's review on every PR. The PR template is committed so GitHub
+# pre-fills every PR description with it, including PRs opened from the web UI.
 .github/*
 !.github/workflows/
 !.github/CODEOWNERS
+!.github/pull_request_template.md
 
 # Project instructions for Claude Code
 CLAUDE.md

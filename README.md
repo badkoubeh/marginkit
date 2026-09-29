@@ -1,7 +1,7 @@
 # marginkit
 Robustness margins with confidence intervals, via dose-response threshold estimation. Model-agnostic — no GPU, no ML framework required
 
-> **Status: `0.1.0`.** Binomial dose-response fits, thresholds with profile-likelihood or delta
+> **Status: `0.1.1`.** Binomial dose-response fits, thresholds with profile-likelihood or delta
 > confidence intervals, censoring, ratios of two thresholds with Fieller or log-delta intervals,
 > fit diagnostics, and the grid break-point rule. Continuous outcomes, clustered and paired
 > inference, and design helpers are planned for `0.2`. While the version is below 1.0, a minor
@@ -17,11 +17,14 @@ bound, and a failed fit carries a status flag and no estimate.
 
 ## Install
 
-Requires Python 3.11 or later. marginkit is not on PyPI yet, so install it from the release tag:
+Requires Python 3.11 or later.
 
 ```bash
-pip install "marginkit @ git+https://github.com/badkoubeh/marginkit@v0.1.0"
+pip install marginkit
 ```
+
+To pin an exact release from source instead, install its git tag, for example
+`pip install "marginkit @ git+https://github.com/badkoubeh/marginkit@v0.1.1"`.
 
 Runtime dependencies are `numpy`, `scipy`, and `statsmodels`, with loose minimum versions.
 
@@ -226,7 +229,7 @@ fake rather than an estimate.
 
 marginkit's break-point and censoring conventions come from
 [zeta-bench](https://github.com/badkoubeh/zeta-bench) (`robustness/cards.py::break_point`). Its
-dose-response estimation is new. See [`docs/PROVENANCE.md`](docs/PROVENANCE.md) for what was
+dose-response estimation is new. See [`docs/PROVENANCE.md`](https://github.com/badkoubeh/marginkit/blob/main/docs/PROVENANCE.md) for what was
 carried over and what deliberately differs.
 
 ## Development
@@ -240,8 +243,8 @@ pytest            # enforces 90% branch coverage
 
 CI runs the tests on Python 3.11, 3.12, and 3.13 against current dependencies. It also runs them
 on Python 3.11 against the oldest supported versions, pinned in `ci/constraints-min.txt`.
-Changes are recorded in [`CHANGELOG.md`](CHANGELOG.md).
+Changes are recorded in [`CHANGELOG.md`](https://github.com/badkoubeh/marginkit/blob/main/CHANGELOG.md).
 
 ## License
 
-Apache-2.0. See [`LICENSE`](LICENSE).
+Apache-2.0. See [`LICENSE`](https://github.com/badkoubeh/marginkit/blob/main/LICENSE).

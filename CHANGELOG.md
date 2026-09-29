@@ -11,12 +11,26 @@ satisfy the public-API change checklist in `docs/IMPLEMENTATION_PLAN.md` Appendi
 
 ## [Unreleased]
 
-## [0.1.0] -- unreleased
+## [0.1.1] -- unreleased
 
-Phase 7, to be tagged `v0.1.0` at this phase's merge commit. It completes v0.1: binomial
-dose-response fits, thresholds with profile or delta intervals, censoring, ratios with Fieller or
-log-delta intervals, and now fit diagnostics. It is published as a git tag only; the PyPI upload
-is deferred.
+Packaging only, and the first release published on PyPI (`decisions/0024`), to be tagged `v0.1.1`.
+No code, public API, schema or numeric change from 0.1.0; upgrading needs nothing.
+
+### Changed
+- Install with `pip install marginkit`. The README's install section, and its links to
+  `docs/PROVENANCE.md`, `CHANGELOG.md` and `LICENSE`, now work on the PyPI project page, where
+  relative links break.
+- `[project.urls]` adds the source repository and the issue tracker, next to the existing
+  homepage and changelog links.
+- Releases are built and published by `.github/workflows/release.yml` through PyPI Trusted
+  Publishing: TestPyPI first, an install check, then PyPI after the owner's approval.
+  `tools/check_dist.py` holds the artifact checks that CI and the release both run.
+
+## [0.1.0] — 2026-09-29
+
+Phase 7, tagged `v0.1.0` at `6da49ab`. It completes v0.1: binomial dose-response fits, thresholds
+with profile or delta intervals, censoring, ratios with Fieller or log-delta intervals, and now fit
+diagnostics. Published as a git tag only; 0.1.1 is the first PyPI release.
 
 **This release is breaking.** Upgrade every reader before any writer.
 

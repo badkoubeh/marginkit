@@ -751,11 +751,22 @@ class TestSparseCellsSilentOnC1GridPlateauCells:
         assert not any(w.startswith("SPARSE_CELLS: ") for w in diag.warnings)
 
     def test_cloglog_flags_exactly_its_own_extreme_single_success(self) -> None:
-        """Asserts the *exact* named severity, not merely that ``0.46415888336127775`` is
-        present: under the superseded Amendment-3-only cutoff of 1, cloglog's own warning here
-        also (wrongly, post-Amendment-4) names four plateau severities
-        (``0.001``/``0.00215``/``0.00464``/``1.0``) that must be silent at the 0.1 cutoff -- a
-        looser "is present" check would not have caught that regression."""
+        """Asserts the *exact* named severity, not merely that it is present: under the
+        superseded Amendment-3-only cutoff of 1, cloglog's own warning here also (wrongly,
+        post-Amendment-4) names four plateau severities (the four all-success cells and the
+        all-failure one) that must be silent at the 0.1 cutoff -- a looser "is present" check
+        would not have caught that regression.
+
+        The expected severity is derived from the fixture's own arrays (the cell whose observed
+        successes is exactly 1), not hard-coded as a computed ``np.logspace`` literal: a
+        platform's own libm can differ from this machine's in the last bit of such a value (CI
+        found exactly that -- ``0.46415888336127775`` here, ``0.4641588833612777`` on another
+        runner, both correct), so the expected string must be ``repr()`` of the *same* float
+        object the fixture already built, formatted exactly the way ``validation.py`` formats a
+        severity in the message (plain ``repr``, checked directly against its source)."""
+        flagged_index = self._SUCCESSES.index(1)  # the one cell with exactly 1 observed success
+        expected_severity_repr = repr(self._SEVERITY[flagged_index])
+
         fit = fit_dose_response(self._obs(), model="binomial", link="cloglog", upper=1.0, lower=0.0)
         assert fit.status is Status.OK
 
@@ -763,7 +774,7 @@ class TestSparseCellsSilentOnC1GridPlateauCells:
         sparse_warnings = [w for w in diag.warnings if w.startswith("SPARSE_CELLS: ")]
 
         assert len(sparse_warnings) == 1
-        assert _named_severities(sparse_warnings[0]) == ["0.46415888336127775"], sparse_warnings[0]
+        assert _named_severities(sparse_warnings[0]) == [expected_severity_repr], sparse_warnings[0]
 
 
 class TestSparseCellsFiresOnZetaPidSensorNoise:

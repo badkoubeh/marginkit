@@ -973,24 +973,33 @@ class TestLinkComparison:
         )
 
     def test_each_converged_links_aic_matches_its_own_fit(self) -> None:
+        # All three links converge on this six-cell design (upper estimated at ~0.95), so the
+        # refit-parity check covers all three, not just logit.
         fit_probit = self._fit("probit")
         fit_logit = self._fit("logit")
+        fit_cloglog = self._fit("cloglog")
         assert fit_probit.status is Status.OK
         assert fit_logit.status is Status.OK
+        assert fit_cloglog.status is Status.OK
         k = 3  # mu, s, upper estimated; lower fixed at 0.0
 
         diag = diagnose(fit_probit)
 
         assert fit_probit.log_likelihood is not None
         assert fit_logit.log_likelihood is not None
+        assert fit_cloglog.log_likelihood is not None
         assert diag.link_aic["probit"] == pytest.approx(
             -2.0 * fit_probit.log_likelihood + 2.0 * k, rel=1e-9
         )
         assert diag.link_aic["logit"] == pytest.approx(
             -2.0 * fit_logit.log_likelihood + 2.0 * k, rel=1e-9
         )
+        assert diag.link_aic["cloglog"] == pytest.approx(
+            -2.0 * fit_cloglog.log_likelihood + 2.0 * k, rel=1e-9
+        )
         assert diag.link_status["probit"] is Status.OK
         assert diag.link_status["logit"] is Status.OK
+        assert diag.link_status["cloglog"] is Status.OK
 
     def test_a_non_converged_alternative_link_reports_aic_none_and_its_status(
         self, monkeypatch: pytest.MonkeyPatch

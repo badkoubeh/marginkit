@@ -222,19 +222,25 @@ class TestEveryReturnPathCarriesMonotonicity:
         assert fit.monotonicity is not None
 
     def test_monotonicity_present_on_a_constructed_not_converged_fit(self) -> None:
-        # Pinned literal (found by search): probit/logit converge, cloglog does not, under
-        # upper="estimate" -- same fixture tests/unit/test_validation.py's link comparison uses.
+        # A *structurally* NOT_CONVERGED input (decisions/0005's no-interior-maximum rule,
+        # "wrong-sign slope" case), not one pinned by search: success genuinely rises with
+        # severity (2/10 -> 5/10 -> 9/10), so the fitted GLM slope is unambiguously the wrong
+        # sign for direction="decreasing" -- a deterministic sign check, not an optimizer
+        # tolerance, so it holds in every environment. An earlier version of this test used a
+        # 3-cell/3-parameter fixture "found by search" whose convergence flipped with platform
+        # and library versions (see tests/unit/test_validation.py::TestLinkComparison's own
+        # comment on the same underlying issue).
         axis = Axis(name="severity", unit="unit", scale="log")
         obs = Observations.from_counts(
             axis,
-            severity=[2.0, 3.0, 10.0],
-            successes=[10, 4, 3],
-            trials=[15, 5, 5],
+            severity=[1.0, 2.0, 4.0],
+            successes=[2, 5, 9],
+            trials=[10, 10, 10],
             outcome="success",
             direction="decreasing",
         )
 
-        fit = fit_dose_response(obs, model="binomial", link="cloglog", upper="estimate", lower=0.0)
+        fit = fit_dose_response(obs, model="binomial", link="probit", upper=1.0, lower=0.0)
 
         assert fit.status is Status.NOT_CONVERGED
         assert fit.monotonicity is not None

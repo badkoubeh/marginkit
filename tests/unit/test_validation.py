@@ -909,16 +909,25 @@ class TestFailedFitHasNoDiagnostics:
 # ------------------------------------------------------------------------------------------
 # Link comparison: each link's AIC equals -2*loglik + 2*k of that link's *own* fit under the
 # same upper/lower spec; a link whose own refit does not converge reports AIC=None and its
-# Status. Dataset chosen (by search, then pinned as a fixed literal) so probit and logit both
-# converge to Status.OK on it while cloglog hits Status.NOT_CONVERGED under upper="estimate",
-# lower=0.0 -- a real fit_dose_response outcome, not a mocked one.
+# Status.
+#
+# The dataset below replaces an earlier one "found by search" (severity=[2,3,10],
+# successes=[10,4,3], trials=[15,5,5]) that pinned cloglog's own NOT_CONVERGED as a fixed
+# literal: 3 cells against 3 estimated parameters (mu, s, upper) put convergence on a knife
+# edge that flipped with platform and library versions (CI found py3.11/Linux converging
+# probit and logit too at latest dependencies, and cloglog converging instead at the
+# minimum-versions floor) -- a test-design flaw, not a statistical finding. The dataset here is
+# deliberately over-determined instead: 6 cells (including a zero-severity control anchoring the
+# estimated ``upper``), n=200 per cell, a smooth monotone success schedule spanning the full
+# dynamic range with no cell near a separation or sparse-count boundary -- verified locally to
+# converge for all three links with comfortable margin, not merely found to converge once.
 # ------------------------------------------------------------------------------------------
 
 
 class TestLinkComparison:
-    _SEVERITY = [2.0, 3.0, 10.0]
-    _SUCCESSES = [10, 4, 3]
-    _TRIALS = [15, 5, 5]
+    _SEVERITY = [0.0, 1.0, 2.0, 4.0, 8.0, 16.0]
+    _SUCCESSES = [190, 166, 136, 95, 54, 24]
+    _TRIALS = [200] * 6
 
     def _obs(self) -> Observations:
         axis = Axis(name="severity", unit="unit", scale="log")
@@ -931,7 +940,7 @@ class TestLinkComparison:
             direction="decreasing",
         )
 
-    def test_setup_sanity_probit_logit_ok_cloglog_not_converged(self) -> None:
+    def test_setup_sanity_all_three_links_converge(self) -> None:
         """Confirms the fixture's own premise before trusting the assertions built on it."""
         obs = self._obs()
         statuses = {
@@ -944,7 +953,7 @@ class TestLinkComparison:
         assert statuses == {
             "probit": Status.OK,
             "logit": Status.OK,
-            "cloglog": Status.NOT_CONVERGED,
+            "cloglog": Status.OK,
         }
 
     def _fit(self, link: str) -> Fit:
@@ -972,7 +981,35 @@ class TestLinkComparison:
         assert diag.link_status["probit"] is Status.OK
         assert diag.link_status["logit"] is Status.OK
 
-    def test_a_non_converged_alternative_link_reports_aic_none_and_its_status(self) -> None:
+    def test_a_non_converged_alternative_link_reports_aic_none_and_its_status(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The alternative-link refit's own non-convergence is forced deterministically here
+        (rather than found by search) by monkeypatching the fitting call
+        ``validation.py``'s ``_refit_link`` uses for any non-fixed-asymptote spec --
+        ``marginkit.models._fit_generic`` -- so only the ``cloglog`` refit is intercepted and
+        every other call (including the ``fit_probit`` fit this test itself builds, and the real
+        ``logit`` refit ``diagnose`` also performs) goes through unchanged. This tests the same
+        ``_link_comparison`` code path as before, just without depending on an optimizer landing
+        on the correct side of a tolerance."""
+        import marginkit.models as models_module
+
+        real_fit_generic = models_module._fit_generic
+
+        def _fake_fit_generic(obs: Observations, **kwargs: object) -> Fit:
+            if kwargs.get("link") == "cloglog":
+                return models_module._status_only_fit(
+                    obs,
+                    cells=kwargs["cells"],  # type: ignore[arg-type]
+                    cluster_ids=kwargs["cluster_ids"],  # type: ignore[arg-type]
+                    link="cloglog",
+                    status=Status.NOT_CONVERGED,
+                    fit_warnings=("test: forced NOT_CONVERGED for deterministic CI coverage",),
+                )
+            return real_fit_generic(obs, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(models_module, "_fit_generic", _fake_fit_generic)
+
         fit_probit = self._fit("probit")
         assert fit_probit.status is Status.OK
 
@@ -980,6 +1017,8 @@ class TestLinkComparison:
 
         assert diag.link_aic["cloglog"] is None
         assert diag.link_status["cloglog"] is Status.NOT_CONVERGED
+        # The patch did not disturb the real, converging logit refit.
+        assert diag.link_status["logit"] is Status.OK
 
     def test_link_aic_and_link_status_cover_exactly_the_three_links(self) -> None:
         fit_probit = self._fit("probit")

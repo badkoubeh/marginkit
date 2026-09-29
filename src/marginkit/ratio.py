@@ -145,11 +145,15 @@ class Ratio:
     status
         The :class:`~marginkit.Status` of this ratio.
     warnings
-        Free-text notes surfaced alongside the ratio. Empty by default.
+        Free-text notes surfaced alongside the ratio. Empty by default. :func:`ratio_interval`
+        carries both ``threshold_a.warnings`` and ``threshold_b.warnings`` here too
+        (`decisions/0023` "Amendment 1", item 7) -- in particular a ``"NON_MONOTONE_DATA: "``
+        entry on either input threshold propagates through, on every path (censored/failed and
+        the ``OK``+``NONE`` path alike).
     schema_version
-        The serialised-result schema version this object belongs to. Defaults to ``"2"``
-        (`decisions/0022`, which added :data:`~marginkit.IntervalShape.HALF_OPEN`);
-        ``from_dict`` still reads a ``"1"`` card, whose ``shape`` was never ``HALF_OPEN``.
+        The serialised-result schema version this object belongs to. Defaults to ``"3"``
+        (`decisions/0023`); ``from_dict`` still reads ``"1"`` and ``"2"`` cards, neither of whose
+        ``shape`` was ever ``HALF_OPEN``.
     provenance
         An opaque mapping the caller may attach to record where the inputs came from.
         marginkit stores it and never interprets it. Empty by default.
@@ -167,7 +171,7 @@ class Ratio:
     censoring: Censoring
     status: Status
     warnings: tuple[str, ...] = ()
-    schema_version: str = "2"
+    schema_version: str = "3"
     provenance: Mapping[str, JSONValue] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -775,6 +779,8 @@ def ratio_interval(
         ``Ratio`` carries a propagated status/censoring flag and no numbers at all
         (`decisions/0015`) -- never a one-sided bound built by mixing an exact censoring bound
         in one threshold with a model-fitted value and its sampling error in the other.
+        ``warnings`` always carries both ``t_a.warnings`` and ``t_b.warnings``
+        (`decisions/0023` "Amendment 1", item 7), whichever path is taken.
 
     Raises
     ------
@@ -843,7 +849,10 @@ def ratio_interval(
             )
         resolved_level = level
 
-    collected_warnings: list[str] = []
+    # decisions/0023 Amendment 1, item 7: carry both inputs' own warnings (for example a
+    # "NON_MONOTONE_DATA: " token from either threshold) onto the ratio, on every path below --
+    # the censored/failed early return and the OK+NONE path alike.
+    collected_warnings: list[str] = [*t_a.warnings, *t_b.warnings]
 
     a_clean = t_a.status is Status.OK and t_a.censoring is Censoring.NONE
     b_clean = t_b.status is Status.OK and t_b.censoring is Censoring.NONE
@@ -875,18 +884,21 @@ def ratio_interval(
     # (`intervals.py`'s own documented "open on both sides" outcome). Nothing else about this
     # function would ever surface that: the delta-method variance used below does not come from
     # `t_a.lo`/`t_a.hi` at all, so a ratio built on such an input looks exactly like an ordinary
-    # one unless it is named explicitly here (hard constraint 3).
+    # one unless it is named explicitly here (hard constraint 3). S3 (Phase 7 stats review):
+    # `t_a.warnings`/`t_b.warnings` are not repr'd into this message -- `collected_warnings`
+    # already starts with both inputs' own warnings in full (`decisions/0023` Amendment 1, item
+    # 7), so embedding them again here would just duplicate them.
     if t_a.lo is None and t_a.hi is None:
         collected_warnings.append(
             "ratio_interval: threshold_a has status=OK and censoring=NONE but reports no "
             "interval at all (lo and hi are both None); this ratio's variance still comes from "
-            f"threshold_a's own delta-method covariance. threshold_a.warnings: {t_a.warnings!r}"
+            "threshold_a's own delta-method covariance"
         )
     if t_b.lo is None and t_b.hi is None:
         collected_warnings.append(
             "ratio_interval: threshold_b has status=OK and censoring=NONE but reports no "
             "interval at all (lo and hi are both None); this ratio's variance still comes from "
-            f"threshold_b's own delta-method covariance. threshold_b.warnings: {t_b.warnings!r}"
+            "threshold_b's own delta-method covariance"
         )
 
     if method == "log_delta":

@@ -482,10 +482,11 @@ class TestFitDefaults:
         fit = _ok_fit()
 
         assert fit.warnings == ()
-        # decisions/0022 bumped the single package-wide SCHEMA_VERSION to "2" (for HALF_OPEN,
-        # a Ratio/IntervalShape change) -- Fit's own default tracks the same constant, since
-        # report.py versions the whole card format, not each type independently.
-        assert fit.schema_version == "2"
+        # decisions/0022 bumped the single package-wide SCHEMA_VERSION to "2" (for HALF_OPEN);
+        # decisions/0023 has since bumped it again, to "3" (Fit.diagnostics) -- Fit's own default
+        # tracks the same constant, since report.py versions the whole card format, not each type
+        # independently.
+        assert fit.schema_version == "3"
         assert fit.provenance == {}
 
 
@@ -1336,8 +1337,9 @@ class TestThresholdDefaultsAndFrozen:
         threshold = _threshold(value=0.05, lo=0.03, hi=0.08, interval_method="profile")
 
         assert threshold.warnings == ()
-        # decisions/0022: see TestFitDefaults's own comment -- one package-wide SCHEMA_VERSION.
-        assert threshold.schema_version == "2"
+        # decisions/0022 and decisions/0023: see TestFitDefaults's own comment -- one
+        # package-wide SCHEMA_VERSION, currently "3".
+        assert threshold.schema_version == "3"
         assert threshold.provenance == {}
 
     def test_is_frozen(self) -> None:
@@ -2330,8 +2332,9 @@ class TestRatioDefaultsAndFrozen:
         ratio = _ratio(estimate=1.0, lo=0.5, hi=2.0, shape=IntervalShape.BOUNDED)
 
         assert ratio.warnings == ()
-        # decisions/0022 bumped SCHEMA_VERSION to "2", for HALF_OPEN -- Ratio's own change.
-        assert ratio.schema_version == "2"
+        # decisions/0022 bumped SCHEMA_VERSION to "2", for HALF_OPEN; decisions/0023 has since
+        # bumped it again, to "3".
+        assert ratio.schema_version == "3"
         assert ratio.provenance == {}
 
     def test_is_frozen(self) -> None:

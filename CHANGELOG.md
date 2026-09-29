@@ -11,8 +11,75 @@ satisfy the public-API change checklist in `docs/IMPLEMENTATION_PLAN.md` Appendi
 
 ## [Unreleased]
 
-Phase 6, to be tagged `v0.1.0a4` once the `0.1.0a3` block below is tagged at Phase 5's merge
-commit.
+## [0.1.0] -- unreleased
+
+Phase 7, to be tagged `v0.1.0` at this phase's merge commit. It completes v0.1: binomial
+dose-response fits, thresholds with profile or delta intervals, censoring, ratios with Fieller or
+log-delta intervals, and now fit diagnostics. It is published as a git tag only; the PyPI upload
+is deferred.
+
+**This release is breaking.** Upgrade every reader before any writer.
+
+### Phase 7 -- diagnostics
+
+#### Added
+- `Diagnostics` and `diagnose(fit)`: deviance and Pearson χ² on grouped cells with their degrees of
+  freedom, dispersion `φ = Pearson χ² / df`, and the AIC of each of `probit`, `logit` and `cloglog`
+  refitted under the same `upper`/`lower` specification, with each refit's `Status`. Computed for
+  successful fits only (`decisions/0023`). They are reported and never acted on: no link is
+  selected and nothing is rescaled.
+  - Warnings: `OVERDISPERSED: ` when `φ > 1.5`; `SPARSE_CELLS: ` when a counted cell has an observed
+    success or failure where fewer than 0.1 were expected, because Pearson χ² and φ are unreliable
+    there.
+  - Degrees of freedom exclude only a cell that is deterministic under the model: the log-axis
+    severity-0 control when `upper` is fixed at 1. Every other cell counts, with fitted
+    probabilities clamped as R's `glm` does (`decisions/0023` Amendment 2).
+- `MonotonicityCheck`, `AdjacentPair` and `check_monotonicity(obs, *, dependence=None,
+  alpha=0.05)`: a one-sided Fisher exact test on each pair of adjacent severity levels with a Holm
+  correction across pairs, computed from the counts alone. The direction comes from `obs`
+  (`decisions/0023` Amendment 1).
+- `Fit.diagnostics` (set only when `status is OK`) and `Fit.monotonicity` (set on every result from
+  `fit_dose_response`, whatever the status), appended fields.
+- `fit_dose_response(..., dependence=None)`, a keyword-only argument.
+- `marginkit.testing.fake_fit` fills `monotonicity` and, for `OK`, `diagnostics` through the real
+  code, so a fake looks like a real fit. New keywords `diagnostics=` and `monotonicity=` override.
+- `schema/scorecard-v3.json`.
+
+#### Changed -- breaking
+- **`schema_version` is `"3"` on every result type.** Every card written by 0.1.0 is rejected by a
+  0.1.0a4 or older reader. 0.1.0 reads v1 and v2 cards, decodes `diagnostics` and `monotonicity` as
+  `None`, and writes an old card back under its original tag without the new fields.
+  `load_schema()` now returns v3; pass `"2"` or `"1"` for the older documents.
+- **`fit_dose_response` raises `ValueError` on clustered observations unless
+  `dependence="independent"` is passed.** *Migration:* add `dependence="independent"` to the call
+  and keep passing it to `threshold()`. That records an independence assumption; clustered
+  inference is planned for v0.2. Callers without cluster ids change nothing.
+
+#### Changed -- behavioural (same signatures, no number changes)
+- `threshold()` adds a warning starting `NON_MONOTONE_DATA: ` whenever `fit.monotonicity` flags a
+  pair, on every status. **It is a different test from `NON_MONOTONE: `** (exact bounds against the
+  fitted curve), which is unchanged; the two can disagree. *Migration:* match the full prefix,
+  including the colon and space. `startswith("NON_MONOTONE")` now matches both.
+- `ratio_interval()` puts both input thresholds' `warnings` (`t_a`'s, then `t_b`'s) at the front of
+  `Ratio.warnings`. In 0.1.0a4 it carried none of them. *Migration:* an empty `Ratio.warnings` no
+  longer means "nothing to note" in 0.1.0a4's sense; read `ratio.threshold_a.warnings` and
+  `ratio.threshold_b.warnings` to tell which input a warning came from.
+- `fit_dose_response` runs two extra fits per call, for the link comparison.
+
+#### Unchanged
+- Every fitted parameter, threshold, interval, status and censoring value. Checked on the zeta
+  matrix: 48 fit configurations and 36 ratios, no numeric difference.
+- `grid_break_point`, and the `NON_MONOTONE: ` token.
+
+#### Open items
+- Can clustered fitting land in v0.2 without either a cluster-aware monotonicity test or relaxing
+  "`monotonicity` is never `None` on a fresh fit"? `MonotonicityCheck.dependence` accepts only
+  `"independent"`, and widening it is a schema bump.
+- On the estimated-asymptote path, adding an all-success control row can change convergence.
+
+## [0.1.0a4] — 2026-09-27
+
+Phase 6, tagged `v0.1.0a4` at `f785f58`.
 
 **This release is breaking, unlike 0.1.0a3.** `IntervalShape` gains a member and `schema_version`
 goes to `"2"` on every result type. Upgrading code needs no change to call existing functions, but
@@ -124,9 +191,9 @@ B item 4). `decisions/0003` is what consumers pin against; a breaking change ins
 - `EXCLUSIVE` is dead surface until `dependence="paired"` lands. Should Phase 9 be the point at
   which its reachability is re-asserted by a test, rather than left to be noticed?
 
-## [0.1.0a3] -- unreleased
+## [0.1.0a3] — 2026-09-27
 
-Phases 4 and 5, to be tagged `v0.1.0a3` at Phase 5's merge commit, which carries
+Phases 4 and 5, tagged `v0.1.0a3` at Phase 5's merge commit `34b5a69`, which carries
 `__version__ = "0.1.0a3"`. Additive; upgrading from 0.1.0a2 needs no consumer change. The two
 phases share one version because `v0.1.0a3` was never tagged for Phase 4 on its own -- Phase 4
 merged with `__version__` still at `0.1.0a2`, so retro-tagging that commit would ship a package

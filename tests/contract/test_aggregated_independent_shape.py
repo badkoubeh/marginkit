@@ -10,6 +10,13 @@ marginkit module is imported.
 A failing test in this file means a breaking change to the public API that zeta-bench depends
 on (plan section 3.3, ``docs/CONSUMERS.md``). **Do not edit this test to make it pass.** Stop
 and ask; that failure is the signal a breaking change needs owner sign-off.
+
+**Edit recorded (decisions/0023, item 2):** ``schema_version`` is now ``"3"`` on every result
+type, including ``GridBreakPoint``. The two literal ``"2"`` assertions this file made against a
+freshly-built ``GridBreakPoint``'s serialised ``schema_version`` were updated to ``"3"`` --
+zeta-bench itself is unaffected (it unpacks ``grid_break_point``'s return to a plain
+``(value, max_tested)`` tuple and never serialises the dataclass at all), but the two assertions
+here are the contract for anyone who does.
 """
 
 from __future__ import annotations
@@ -133,10 +140,11 @@ def test_result_round_trips_through_json_with_string_censoring_and_schema_versio
     assert reloaded["censoring"] in ("NONE", "RIGHT")
     assert reloaded["censoring"] == "NONE"
     # decisions/0022 bumped schema_version to "2" on every result type, GridBreakPoint
-    # included: one schema document means one version. zeta-bench is unaffected -- it unpacks
+    # included: one schema document means one version. decisions/0023 has since bumped it again,
+    # to "3" (Fit.diagnostics), still package-wide. zeta-bench is unaffected -- it unpacks
     # grid_break_point to a plain (value, max_tested) tuple and never serialises this
     # dataclass -- but this assertion is the contract for anyone who does.
-    assert reloaded["schema_version"] == "2"
+    assert reloaded["schema_version"] == "3"
 
 
 def test_right_censored_result_round_trips_through_json_too() -> None:
@@ -148,7 +156,7 @@ def test_right_censored_result_round_trips_through_json_too() -> None:
     reloaded = json.loads(dumped)
 
     assert reloaded["censoring"] == "RIGHT"
-    assert reloaded["schema_version"] == "2"  # decisions/0022, as above
+    assert reloaded["schema_version"] == "3"  # decisions/0022, decisions/0023, as above
 
 
 def test_criterion_is_keyword_only_and_signed_defaults_to_false() -> None:

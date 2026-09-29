@@ -12,11 +12,19 @@ be where the optimizer stopped (``decisions/0005``).
 
 **v1 is binomial-only.** ``model`` accepts only ``"binomial"``; a new model family (``"ll4"``,
 ``"isotonic"``) is a v0.2 addition that requires bumping ``schema_version`` again, not a silent
-extension of the current one. ``schema_version`` is now ``"2"`` (`decisions/0022`, which spent it
-on :data:`~marginkit.IntervalShape.HALF_OPEN` rather than a model-family change), so the v0.2
-model-family addition anticipated here needs the bump *after* the current one. The number is
-deliberately not named: :data:`marginkit.report.SCHEMA_VERSION` is the single source, and every
-document that copied a predicted number went stale together when ``"2"`` was spent elsewhere.
+extension of the current one. ``schema_version`` is now ``"3"`` (`decisions/0023`, which spent it
+on :attr:`Fit.diagnostics` and :attr:`Fit.monotonicity` -- `decisions/0022` had already spent
+``"2"`` on :data:`~marginkit.IntervalShape.HALF_OPEN`), so the v0.2 model-family addition
+anticipated here needs the bump *after* the current one, i.e. ``"4"``. The number is deliberately
+not named: :data:`marginkit.report.SCHEMA_VERSION` is the single source, and every document that
+copied a predicted number went stale together when ``"2"`` and then ``"3"`` were spent elsewhere.
+
+As of `decisions/0023` (Phase 7), :class:`Fit` also carries :attr:`~Fit.diagnostics` (model-only
+goodness of fit, dispersion and link comparison, filled only when ``status`` is ``OK`` -- see
+:func:`marginkit.diagnose`) and :attr:`~Fit.monotonicity` (a data-only adjacent-level check,
+filled on *every* return path regardless of ``status`` -- see :func:`marginkit.check_monotonicity`
+in :mod:`marginkit.validation`). Both are reported and never acted on: neither changes ``link``,
+``params``, or any other field of the ``Fit`` they are attached to.
 """
 
 from __future__ import annotations
@@ -24,7 +32,7 @@ from __future__ import annotations
 import math
 import warnings
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 import numpy as np
@@ -39,6 +47,12 @@ from statsmodels.tools.sm_exceptions import ConvergenceWarning, PerfectSeparatio
 from statsmodels.tools.tools import add_constant
 
 from marginkit.types import Axis, Cell, JSONValue, Observations, Status, _check_finite_number
+from marginkit.validation import Diagnostics, MonotonicityCheck, check_monotonicity, diagnose
+
+# `marginkit.validation` only imports `Fit` from this module under `TYPE_CHECKING` (see that
+# module's own docstring), so this is not a circular import at runtime: by the time
+# `fit_dose_response` below actually calls `diagnose`/`check_monotonicity`, this module has
+# already finished executing this very import statement.
 
 # Narrow statsmodels imports above, never `statsmodels.api`: that module also imports graphics and
 # tsa, and statsmodels 0.14.0's tsa fails to import against current pandas
@@ -53,6 +67,10 @@ _VALID_LINKS: dict[str, frozenset[str]] = {
 _BINOMIAL_PARAM_NAMES = frozenset({"mu", "s", "upper", "lower"})
 _VALID_DIRECTIONS = frozenset({"decreasing", "increasing"})
 _INVALID_FIT_STATUSES = frozenset({Status.UNREACHABLE, Status.FAILS_AT_BASELINE})
+# decisions/0023 Amendment 2 (api-compat finding 1): schema "1" and "2" predate
+# Fit.diagnostics/.monotonicity entirely -- a Fit tagged with either must not carry a non-None
+# value for either field, since that version's own packaged schema has no such property.
+_PRE_DIAGNOSTICS_SCHEMA_VERSIONS = frozenset({"1", "2"})
 
 # Tolerance for Covariance's positive-definiteness check: the minimum eigenvalue must exceed
 # this, scaled by the matrix's largest magnitude entry so the tolerance is not swamped by the
@@ -319,9 +337,15 @@ class Fit:
     pending owner decision D5's restatement of the definitions for an increasing-is-worse
     outcome (§5.3). ``Observations`` itself still accepts both directions.
 
-    ``predict()`` (curve and band evaluation, R8) arrives in Phase 4. ``diagnostics``
-    (goodness-of-fit, dispersion, monotonicity, link comparison, §5.7) arrives in Phase 7 as an
-    appended field defaulting to ``None``, which is a safe addition under Appendix B.
+    ``predict()`` (curve and band evaluation, R8) arrives in Phase 4. ``diagnostics`` (§5.7:
+    goodness of fit, dispersion, link comparison) and ``monotonicity`` (§5.7's monotonicity
+    check, moved onto its own field by `decisions/0023`'s "Amendment 1") arrive in Phase 7 as two
+    appended fields, both defaulting to ``None`` -- but appending them is *not* the "safe
+    addition under Appendix B" an earlier version of this docstring claimed (`decisions/0023`'s
+    own "Corrects" note): every object in the packaged schema has ``additionalProperties: false``,
+    so a `0.1.0a4` reader would reject a card whose ``Fit`` carries either key at all, including a
+    ``null`` value. That is exactly the incompatibility ``schema_version`` exists to announce, so
+    `decisions/0023` bumped it to ``"3"`` rather than adding the fields silently.
 
     Attributes
     ----------
@@ -334,8 +358,9 @@ class Fit:
         ``"decreasing"`` only, in this release (see above).
     model
         The model family. Only ``"binomial"`` exists in v0.1; a new family such as ``"ll4"`` or
-        ``"isotonic"`` is a v0.2 addition requiring a further ``schema_version`` bump (``"2"`` is
-        already spent, `decisions/0022`).
+        ``"isotonic"`` is a v0.2 addition requiring a further ``schema_version`` bump -- ``"2"``
+        and ``"3"`` are both already spent (`decisions/0022`, `decisions/0023`), so that bump is
+        ``"4"``.
     link
         The link function: ``"probit"``, ``"logit"`` or ``"cloglog"`` for ``model="binomial"``.
         Required; the schema's ``link`` enum carries no ``null`` alternative, so this is a
@@ -372,11 +397,24 @@ class Fit:
         Free-text notes surfaced alongside the fit (for example, ``CONTROL_INCOMPATIBLE``
         carries a message suggesting ``upper="estimate"``). Empty by default.
     schema_version
-        The serialised-result schema version this object belongs to. Defaults to ``"2"``
-        (`decisions/0022`); ``from_dict`` still reads a ``"1"`` card.
+        The serialised-result schema version this object belongs to. Defaults to ``"3"``
+        (`decisions/0023`); ``from_dict`` still reads ``"1"`` and ``"2"`` cards.
     provenance
         An opaque mapping the caller may attach to record where the inputs came from.
         marginkit stores it and never interprets it. Empty by default.
+    diagnostics
+        Model-only goodness-of-fit, dispersion and link-comparison diagnostics
+        (:func:`marginkit.diagnose`, §5.7). Set exactly when ``status`` is
+        :data:`~marginkit.Status.OK` (hard constraint 3: no model-derived numbers on a failed
+        fit); ``None`` otherwise, including on every card read from schema ``"1"`` or ``"2"``
+        (which predate this field). Appended field (`decisions/0023`).
+    monotonicity
+        A data-only adjacent-severity-level monotonicity check
+        (:func:`marginkit.check_monotonicity`, `decisions/0023`'s "Amendment 1"), computed from
+        the raw :class:`~marginkit.Observations` before a fitting path was even chosen. Unlike
+        ``diagnostics``, this is set on *every* fresh result regardless of ``status`` -- it needs
+        only counts, never a converged fit -- so it is ``None`` only for a card read from schema
+        ``"1"`` or ``"2"``. The last field, appended after ``diagnostics``.
     """
 
     axis: Axis
@@ -391,8 +429,10 @@ class Fit:
     status: Status
     cluster_ids: tuple[str | int, ...] | None = None
     warnings: tuple[str, ...] = ()
-    schema_version: str = "2"
+    schema_version: str = "3"
     provenance: Mapping[str, JSONValue] = field(default_factory=dict)
+    diagnostics: Diagnostics | None = None
+    monotonicity: MonotonicityCheck | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "warnings", tuple(self.warnings))
@@ -433,6 +473,23 @@ class Fit:
             raise ValueError("Fit.cells must not be empty")
 
         _check_cluster_ids(self.cluster_ids, label="Fit.cluster_ids")
+
+        if self.status is not Status.OK and self.diagnostics is not None:
+            raise ValueError(
+                "Fit.diagnostics must be None when status is not OK (hard constraint 3: no "
+                f"model-derived numbers on a failed fit), got status={self.status!r} with "
+                "diagnostics set"
+            )
+
+        if self.schema_version in _PRE_DIAGNOSTICS_SCHEMA_VERSIONS and (
+            self.diagnostics is not None or self.monotonicity is not None
+        ):
+            raise ValueError(
+                f"Fit.schema_version={self.schema_version!r} predates diagnostics/monotonicity "
+                "(decisions/0023 Amendment 2): a Fit tagged with schema_version '1' or '2' must "
+                "have both fields None, since that schema version's own document has no such "
+                "property"
+            )
 
         is_ok = self.status is Status.OK
         has_params = self.params is not None
@@ -634,6 +691,23 @@ def _f_cdf(z: NDArray[np.float64], link: str) -> NDArray[np.float64]:
     return np.asarray(-np.expm1(-np.exp(z)), dtype=np.float64)  # link == "cloglog"
 
 
+def _f_survival(z: NDArray[np.float64], link: str) -> NDArray[np.float64]:
+    """``1 - _f_cdf(z, link)``, computed directly from each link's own survival identity --
+    never as ``1 - _f_cdf(z, link)`` -- so it stays numerically accurate at the tail where that
+    subtraction would round to exactly ``0.0`` (`decisions/0023` Amendment 2, item 2):
+    ``scipy.stats.norm.sf`` for probit; ``expit(-z) == 1 - expit(z)`` exactly for logit (the
+    logistic CDF's own reflection identity); ``exp(-exp(z)) == 1 - (-expm1(-exp(z)))`` exactly
+    for cloglog (``_f_cdf``'s own algebraic identity, read the other way). ``_f_cdf`` itself is
+    already accurate where *it* is small (large negative ``z``); this is its mirror image, accurate
+    where *it* is close to ``1`` (large positive ``z``).
+    """
+    if link == "probit":
+        return np.asarray(norm.sf(z), dtype=np.float64)
+    if link == "logit":
+        return np.asarray(expit(-z), dtype=np.float64)
+    return np.asarray(np.exp(-np.exp(z)), dtype=np.float64)  # link == "cloglog"
+
+
 def _curve_success_probability(
     severity: ArrayLike,
     *,
@@ -666,6 +740,54 @@ def _curve_success_probability(
     if np.any(zero_control):
         result[zero_control] = upper
     return result
+
+
+def _curve_success_and_failure_probability(
+    severity: ArrayLike,
+    *,
+    mu: float,
+    s: float,
+    upper: float,
+    lower: float,
+    scale: str,
+    link: str,
+    center: float = 0.0,
+    spread: float = 1.0,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """``(p, 1 - p)`` for the curve at ``severity``, each computed *directly* rather than one as
+    the complement of the other, so both stay numerically accurate at their own informative tail
+    (`decisions/0023` Amendment 2, item 2) -- used by :func:`marginkit.diagnose`'s goodness-of-fit
+    sums, which need both ``p`` and ``1 - p`` (and their product) without either rounding to an
+    exact ``0``/``1`` for a cell that is not :func:`marginkit.diagnose`'s own *structural*
+    exclusion.
+
+    ``p = l + (u - l) * (1 - F(z))``, using :func:`_f_survival` -- accurate where ``p`` itself is
+    small (high severity, under ``direction="decreasing"``), the tail where :func:`_f_cdf` alone
+    would already have rounded to exactly ``1`` and so silently rounded ``p`` to exactly ``l``.
+    ``1 - p = (1 - u) + (u - l) * F(z)``, using :func:`_f_cdf` directly -- accurate where it is
+    small (low severity), the tail :func:`_f_cdf` is already accurate on. Neither value is
+    clamped here (that is the caller's job, against whatever floor it needs); the two need not
+    sum to exactly ``1.0`` in floating point, by design -- forcing that would reintroduce the
+    exact cancellation this function exists to avoid.
+
+    Shares :func:`_curve_success_probability`'s log-axis zero-severity-control handling (``p(0)
+    = u`` exactly, R3) and ``center``/``spread`` reparametrisation -- see that function's
+    docstring for both.
+    """
+    x = np.asarray(severity, dtype=np.float64)
+    p = np.empty_like(x)
+    q = np.empty_like(x)
+    zero_control = (scale == "log") & (x == 0.0)
+    nonzero = ~zero_control
+    if np.any(nonzero):
+        t = (_transform(x[nonzero], scale=scale) - center) / spread
+        z = (t - mu) / s
+        p[nonzero] = lower + (upper - lower) * _f_survival(z, link)
+        q[nonzero] = (1.0 - upper) + (upper - lower) * _f_cdf(z, link)
+    if np.any(zero_control):
+        p[zero_control] = upper
+        q[zero_control] = 1.0 - upper
+    return p, q
 
 
 def _cells_to_arrays(
@@ -1800,6 +1922,16 @@ def _status_only_fit(
     )
 
 
+def _finalize(fit: Fit, *, monotonicity: MonotonicityCheck) -> Fit:
+    """Attach ``monotonicity`` (every return path, whatever the status) and ``diagnostics``
+    (only when ``fit.status is Status.OK``) to a freshly built ``Fit``, per `decisions/0023`'s
+    "Amendment 1". The single place :func:`fit_dose_response` routes every one of its return
+    statements through, so the diagnostics/monotonicity rule is stated once.
+    """
+    diagnostics = diagnose(fit) if fit.status is Status.OK else None
+    return replace(fit, diagnostics=diagnostics, monotonicity=monotonicity)
+
+
 def fit_dose_response(
     obs: Observations,
     *,
@@ -1807,6 +1939,7 @@ def fit_dose_response(
     link: Literal["probit", "logit", "cloglog"],
     upper: float | Literal["estimate"],
     lower: float | Literal["estimate"],
+    dependence: str | None = None,
 ) -> Fit:
     """Fit a binomial dose-response curve to ``obs`` (plan section 4's Public API, section 5.1).
 
@@ -1817,6 +1950,12 @@ def fit_dose_response(
     separation before fitting (plan section 5.1 item 3) and for a non-interior maximum after
     fitting (``decisions/0005``); either gives an explicit :class:`~marginkit.Status` with no
     numbers, never a value that merely happens to be where the optimizer stopped.
+
+    Before any of that, :func:`marginkit.check_monotonicity` is run on ``obs`` directly
+    (`decisions/0023`'s "Amendment 1"), and its result is attached to the returned ``Fit`` as
+    ``monotonicity`` on *every* return path below, whatever the resulting ``status`` -- the check
+    needs only raw counts, so it is not hidden behind a fit that failed. ``diagnostics`` is filled
+    (via :func:`marginkit.diagnose`) only when the fit reaches :data:`~marginkit.Status.OK`.
 
     Parameters
     ----------
@@ -1832,6 +1971,11 @@ def fit_dose_response(
     upper, lower
         Each either a fixed probability in ``[0, 1]``, or the literal string ``"estimate"``.
         Required, with no default (a wrong default would silently change what curve is fit).
+    dependence
+        ``None`` (the default) resolves to ``"independent"`` unless ``obs.cluster`` is set, in
+        which case omitting it raises (R2) -- forwarded to :func:`marginkit.check_monotonicity`
+        as-is, so there is only one implementation of this guard (`decisions/0023`'s
+        "Amendment 1", item 6). ``"independent"`` may always be passed explicitly.
 
     Returns
     -------
@@ -1840,8 +1984,11 @@ def fit_dose_response(
         a covariance over the estimated ones, or one of :data:`~marginkit.Status.SEPARATION`,
         :data:`~marginkit.Status.NOT_CONVERGED` or :data:`~marginkit.Status.CONTROL_INCOMPATIBLE`
         with no numbers and a reason in ``warnings``. ``cluster_ids`` mirrors ``obs.cluster``
-        whatever the outcome (R2's dependence guard is enforced downstream, in
-        :class:`~marginkit.Ratio`, not here).
+        whatever the outcome. R2's dependence guard is now enforced here too, at fit time
+        (`decisions/0023` "Amendment 1", item 6, via the ``check_monotonicity`` call above) --
+        :class:`~marginkit.Ratio` and :func:`marginkit.threshold` each still enforce it again
+        for their own clustered-fit inputs. ``monotonicity`` is never ``None`` on a freshly
+        built ``Fit``; ``diagnostics`` is ``None`` unless ``status`` is ``OK``.
 
     Raises
     ------
@@ -1849,7 +1996,9 @@ def fit_dose_response(
         If ``model``/``link`` is not one of the values above, if ``obs.direction`` is not
         ``"decreasing"`` (an increasing-is-worse curve is pending owner decision D5; ``Fit``
         itself rejects it), if ``upper``/``lower`` is not a valid probability or ``"estimate"``,
-        or if both are fixed with ``upper <= lower``.
+        if both are fixed with ``upper <= lower``, or if ``obs.cluster`` is set and
+        ``dependence`` is not ``"independent"`` (R2, raised by
+        :func:`marginkit.check_monotonicity`).
     """
     if model != "binomial":
         raise ValueError(f"fit_dose_response: model must be 'binomial', got {model!r}")
@@ -1863,6 +2012,12 @@ def fit_dose_response(
             "(model='binomial' only supports 'decreasing'; an increasing-is-worse definition "
             "is pending owner decision D5)"
         )
+
+    # decisions/0023 Amendment 1, item 1: computed from the raw Observations before a fitting
+    # path is even chosen, and attached to every return path below. Item 6: this call is the
+    # dependence guard (R2) too -- there is no separate check here, so there is only one
+    # implementation.
+    monotonicity = check_monotonicity(obs, dependence=dependence)
 
     upper_is_estimate, upper_value = _resolve_asymptote(upper, label="upper")
     lower_is_estimate, lower_value = _resolve_asymptote(lower, label="lower")
@@ -1878,24 +2033,30 @@ def fit_dose_response(
         cells, axis=obs.axis, upper_is_estimate=upper_is_estimate, upper_value=upper_value
     )
     if control_incompatible_warning is not None:
-        return _status_only_fit(
-            obs,
-            cells=cells,
-            cluster_ids=cluster_ids,
-            link=link,
-            status=Status.CONTROL_INCOMPATIBLE,
-            fit_warnings=(control_incompatible_warning,),
+        return _finalize(
+            _status_only_fit(
+                obs,
+                cells=cells,
+                cluster_ids=cluster_ids,
+                link=link,
+                status=Status.CONTROL_INCOMPATIBLE,
+                fit_warnings=(control_incompatible_warning,),
+            ),
+            monotonicity=monotonicity,
         )
 
     separation_warning = _check_separation(cells, axis=obs.axis)
     if separation_warning is not None:
-        return _status_only_fit(
-            obs,
-            cells=cells,
-            cluster_ids=cluster_ids,
-            link=link,
-            status=Status.SEPARATION,
-            fit_warnings=(separation_warning,),
+        return _finalize(
+            _status_only_fit(
+                obs,
+                cells=cells,
+                cluster_ids=cluster_ids,
+                link=link,
+                status=Status.SEPARATION,
+                fit_warnings=(separation_warning,),
+            ),
+            monotonicity=monotonicity,
         )
 
     if (
@@ -1904,15 +2065,21 @@ def fit_dose_response(
         and upper_value == 1.0
         and lower_value == 0.0
     ):
-        return _fit_glm(obs, cells=cells, cluster_ids=cluster_ids, link=link)
+        return _finalize(
+            _fit_glm(obs, cells=cells, cluster_ids=cluster_ids, link=link),
+            monotonicity=monotonicity,
+        )
 
-    return _fit_generic(
-        obs,
-        cells=cells,
-        cluster_ids=cluster_ids,
-        link=link,
-        upper_is_estimate=upper_is_estimate,
-        upper_value=upper_value,
-        lower_is_estimate=lower_is_estimate,
-        lower_value=lower_value,
+    return _finalize(
+        _fit_generic(
+            obs,
+            cells=cells,
+            cluster_ids=cluster_ids,
+            link=link,
+            upper_is_estimate=upper_is_estimate,
+            upper_value=upper_value,
+            lower_is_estimate=lower_is_estimate,
+            lower_value=lower_value,
+        ),
+        monotonicity=monotonicity,
     )

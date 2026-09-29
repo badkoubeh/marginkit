@@ -11,6 +11,7 @@ would produce for the same inputs.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 
 from scipy.stats import binomtest
@@ -19,9 +20,47 @@ from marginkit.empirical import BaselineRate, GridBreakPoint
 from marginkit.models import Covariance, Fit, Parameter
 from marginkit.ratio import Ratio
 from marginkit.threshold import Threshold
-from marginkit.types import Axis, Cell, Censoring, Definition, IntervalShape, JSONValue, Status
+from marginkit.types import (
+    Axis,
+    Cell,
+    Censoring,
+    Definition,
+    IntervalShape,
+    JSONValue,
+    Observations,
+    Status,
+)
+from marginkit.validation import Diagnostics, MonotonicityCheck, check_monotonicity, diagnose
 
 __all__ = ["fake_fit", "fake_ratio", "fake_threshold"]
+
+
+class _Unset:
+    """Sentinel distinguishing "argument not passed" from an explicit ``None`` override for
+    ``fake_fit``'s ``diagnostics``/``monotonicity`` parameters (`decisions/0023` Amendment 2,
+    item 4): an explicit argument -- ``None`` included -- always overrides; only *omitting* the
+    argument entirely means "compute the real one"."""
+
+    def __repr__(self) -> str:
+        return "<unset>"
+
+
+_UNSET = _Unset()
+
+
+def _observations_from_cells(fit: Fit) -> Observations:
+    """Rebuild the :class:`~marginkit.Observations` a fake ``fit`` "came from", so
+    :func:`~marginkit.check_monotonicity` can run on it the same way it would on real data
+    (`decisions/0023` Amendment 2, item 4)."""
+    return Observations.from_counts(
+        fit.axis,
+        severity=[c.severity for c in fit.cells],
+        successes=[c.successes for c in fit.cells],
+        trials=[c.trials for c in fit.cells],
+        outcome=fit.outcome,
+        direction=fit.direction,
+    )
+
 
 _AXIS = Axis(name="severity", unit="unit", scale="log")
 _FAKE_WARNING = (
@@ -91,10 +130,14 @@ def _fake_ok_params_and_covariance() -> tuple[dict[str, Parameter], Covariance]:
 
 
 def _fake_ok_fit(
-    cells: tuple[Cell, ...], *, provenance: Mapping[str, JSONValue] | None = None
+    cells: tuple[Cell, ...],
+    *,
+    provenance: Mapping[str, JSONValue] | None = None,
+    diagnostics: Diagnostics | None | _Unset = _UNSET,
+    monotonicity: MonotonicityCheck | None | _Unset = _UNSET,
 ) -> Fit:
     params, covariance = _fake_ok_params_and_covariance()
-    return Fit(
+    base = Fit(
         axis=_AXIS,
         outcome="success",
         direction="decreasing",
@@ -109,10 +152,26 @@ def _fake_ok_fit(
         warnings=(_FAKE_WARNING,),
         provenance=_fake_provenance(provenance),
     )
+    # decisions/0023 Amendment 2, item 4: mirrors a real fit_dose_response result -- diagnostics
+    # through diagnose() (status is OK here, so this never raises), monotonicity through
+    # check_monotonicity() on the same cells -- unless the caller explicitly overrode either.
+    resolved_diagnostics = diagnose(base) if isinstance(diagnostics, _Unset) else diagnostics
+    resolved_monotonicity = (
+        check_monotonicity(_observations_from_cells(base))
+        if isinstance(monotonicity, _Unset)
+        else monotonicity
+    )
+    return dataclasses.replace(
+        base, diagnostics=resolved_diagnostics, monotonicity=resolved_monotonicity
+    )
 
 
 def fake_fit(
-    *, status: Status = Status.OK, provenance: Mapping[str, JSONValue] | None = None
+    *,
+    status: Status = Status.OK,
+    provenance: Mapping[str, JSONValue] | None = None,
+    diagnostics: Diagnostics | None | _Unset = _UNSET,
+    monotonicity: MonotonicityCheck | None | _Unset = _UNSET,
 ) -> Fit:
     """Build a deterministic, schema-valid :class:`~marginkit.Fit`.
 
@@ -126,6 +185,19 @@ def fake_fit(
         :class:`~marginkit.Fit`'s own invariant.
     provenance
         Stored on the result as given, or ``{}`` if not provided.
+    diagnostics
+        Mirrors a real fit (`decisions/0023` Amendment 2, item 4): when omitted entirely, this is
+        :func:`~marginkit.diagnose` on the built fit when ``status`` is ``OK``, or ``None``
+        otherwise (:func:`~marginkit.diagnose` itself requires ``status is Status.OK``). Passing
+        an explicit value -- ``None`` included -- always overrides that and is stored as given;
+        ``Fit`` itself still rejects a non-``None`` value when ``status`` is not ``OK`` (hard
+        constraint 3).
+    monotonicity
+        Mirrors a real fit, the same way ``diagnostics`` does: when omitted entirely, this is
+        :func:`~marginkit.check_monotonicity` on the built fit's own cells, for *every* ``status``
+        (a real :func:`~marginkit.fit_dose_response` result is never ``None`` here regardless of
+        status, `decisions/0023` "Amendment 1"). An explicit value -- ``None`` included -- always
+        overrides.
 
     Returns
     -------
@@ -134,9 +206,11 @@ def fake_fit(
         ``warnings`` naming it a fake.
     """
     if status is Status.OK:
-        return _fake_ok_fit(_CELLS, provenance=provenance)
+        return _fake_ok_fit(
+            _CELLS, provenance=provenance, diagnostics=diagnostics, monotonicity=monotonicity
+        )
 
-    return Fit(
+    base = Fit(
         axis=_AXIS,
         outcome="success",
         direction="decreasing",
@@ -150,6 +224,15 @@ def fake_fit(
         cluster_ids=None,
         warnings=(_FAKE_WARNING,),
         provenance=_fake_provenance(provenance),
+    )
+    resolved_diagnostics = None if isinstance(diagnostics, _Unset) else diagnostics
+    resolved_monotonicity = (
+        check_monotonicity(_observations_from_cells(base))
+        if isinstance(monotonicity, _Unset)
+        else monotonicity
+    )
+    return dataclasses.replace(
+        base, diagnostics=resolved_diagnostics, monotonicity=resolved_monotonicity
     )
 
 

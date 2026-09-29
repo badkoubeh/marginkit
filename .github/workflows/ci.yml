@@ -93,7 +93,10 @@ jobs:
     # property that cannot regress without a source change, so a push to main re-running them
     # buys nothing. The numbers they produce are recorded in docs/validation.md.
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    timeout-minutes: 45
+    # About 34 min before 0.1.0; about 52 min since, because every fit_dose_response call also
+    # refits the other two links for Diagnostics (decisions/0023). A flag that skips the link
+    # comparison would bring this back down, and needs its own decision.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

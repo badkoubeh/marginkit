@@ -26,11 +26,12 @@ required-key set is read from the packaged schema matching the dict's own ``sche
 (:data:`load_schema`), not duplicated as a literal list, so it cannot drift from
 ``schema/scorecard-v{version}.json``.
 
-``SCHEMA_VERSION`` is ``"2"`` as of `decisions/0022` (:class:`~marginkit.IntervalShape` gained
-``HALF_OPEN``). ``from_dict`` also still reads a ``"1"`` card (Appendix B item 4): both
-``"1"`` and ``"2"`` are accepted ``schema_version`` values, and a freshly-constructed result
-carries whatever its dataclass field defaults to, which is ``"2"`` everywhere as of this
-release.
+``SCHEMA_VERSION`` is ``"3"`` as of `decisions/0023` (:class:`~marginkit.Fit` gained
+``diagnostics`` and ``monotonicity``; `decisions/0022` had already spent ``"2"`` on
+:class:`~marginkit.IntervalShape` gaining ``HALF_OPEN``). ``from_dict`` also still reads ``"1"``
+and ``"2"`` cards (Appendix B item 4): ``"1"``, ``"2"`` and ``"3"`` are all accepted
+``schema_version`` values, and a freshly-constructed result carries whatever its dataclass field
+defaults to, which is ``"3"`` everywhere as of this release.
 
 ``load_schema`` reads the packaged ``schema/scorecard-v{version}.json`` with
 :mod:`importlib.resources` -- ``schema/scorecard-v1.json`` stays packaged alongside
@@ -56,20 +57,22 @@ from importlib import resources
 from typing import Any
 
 from marginkit.empirical import BaselineRate, GridBreakPoint
-from marginkit.models import Covariance, Fit, Parameter
+from marginkit.models import _PRE_DIAGNOSTICS_SCHEMA_VERSIONS, Covariance, Fit, Parameter
 from marginkit.ratio import Ratio
 from marginkit.threshold import Threshold
 from marginkit.types import Axis, Cell, Censoring, Definition, IntervalShape, JSONValue, Status
+from marginkit.validation import AdjacentPair, Diagnostics, MonotonicityCheck
 
 __all__ = ["SCHEMA_VERSION", "Scorecard", "from_dict", "load_schema", "to_dict"]
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 
 # Appendix B item 4: `from_dict` must still read the previous schema version after a bump.
-# `"1"` predates `decisions/0022` (no `IntervalShape.HALF_OPEN`); `"2"` is current. A future bump
-# extends this set and drops the oldest entry only when that version's reader support is
-# deliberately retired, not silently.
-_SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset({"1", "2"})
+# `"1"` predates `decisions/0022` (no `IntervalShape.HALF_OPEN`); `"2"` predates `decisions/0023`
+# (no `Fit.diagnostics`/`.monotonicity`); `"3"` is current. A future bump extends this set and
+# drops the oldest entry only when that version's reader support is deliberately retired, not
+# silently.
+_SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset({"1", "2", "3"})
 
 
 def _default_created_at() -> str:
@@ -106,15 +109,15 @@ class Scorecard:
         The version of marginkit that produced this scorecard. Defaults to
         :data:`marginkit.__version__` at construction time.
     schema_version
-        The serialised-result schema version this object belongs to. Defaults to ``"2"``
-        (`decisions/0022`); ``from_dict`` still reads a ``"1"`` card.
+        The serialised-result schema version this object belongs to. Defaults to ``"3"``
+        (`decisions/0023`); ``from_dict`` still reads ``"1"`` and ``"2"`` cards.
     """
 
     results: tuple[GridBreakPoint | Fit | Threshold | Ratio, ...]
     provenance: Mapping[str, JSONValue] = field(default_factory=dict)
     created_at: str = field(default_factory=_default_created_at)
     marginkit_version: str = field(default_factory=_default_marginkit_version)
-    schema_version: str = "2"
+    schema_version: str = "3"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "results", tuple(self.results))
@@ -201,8 +204,20 @@ def _encode_field_value(value: object) -> JSONValue:
 
 def _encode_dataclass_instance(obj: Any) -> dict[str, JSONValue]:
     cls = type(obj)
+    # api-compat finding 1 (decisions/0023 Amendment 2): a Fit tagged "1" or "2" never had a
+    # diagnostics/monotonicity key at all -- not even as null -- so re-writing one must not
+    # silently add either key just because the *current* Fit dataclass carries the field.
+    # Fit.__post_init__ already requires both to be None whenever schema_version predates them
+    # (_PRE_DIAGNOSTICS_SCHEMA_VERSIONS), so omitting the keys here loses no information.
+    omitted_fields: frozenset[str] = (
+        frozenset({"diagnostics", "monotonicity"})
+        if isinstance(obj, Fit) and obj.schema_version in _PRE_DIAGNOSTICS_SCHEMA_VERSIONS
+        else frozenset()
+    )
     result: dict[str, JSONValue] = {}
     for f in dataclasses.fields(obj):
+        if f.name in omitted_fields:
+            continue
         raw = getattr(obj, f.name)
         if f.name == "provenance":
             result[f.name] = _encode_provenance(raw)
@@ -297,6 +312,49 @@ def _schema_required_by_type(version: str = SCHEMA_VERSION) -> dict[str, frozens
     return result
 
 
+@lru_cache(maxsize=8)  # generous headroom for however many schema versions are ever supported
+def _schema_properties_by_type(version: str = SCHEMA_VERSION) -> dict[str, frozenset[str]]:
+    """The packaged ``version`` schema's own ``properties`` key set for each of the five tagged
+    result types, keyed by class name, ``"type"`` **included** (unlike
+    :func:`_schema_required_by_type`, which strips it since ``from_dict`` checks ``"type"``
+    separately -- there is no such special-casing needed here).
+
+    Used as :func:`_validated_fields`'s "allowed keys" set for a tagged type, in place of the
+    *current* dataclass's own field names: a key that a tagged object's own ``schema_version``
+    never had is then rejected as unknown even when the *current* dataclass does have that field
+    (api-compat finding 1, `decisions/0023` Amendment 2: a ``"1"``- or ``"2"``-tagged ``Fit``
+    payload carrying ``diagnostics``/``monotonicity`` -- fields schema ``"3"`` alone added -- must
+    be rejected, not silently accepted because today's ``Fit`` dataclass happens to have them).
+    Same caching and malformed-schema-detection shape as :func:`_schema_required_by_type`, read
+    from :func:`load_schema` rather than duplicated as a literal list.
+    """
+    schema = load_schema(version)
+    root_properties = schema.get("properties")
+    if not isinstance(root_properties, dict):
+        raise TypeError(
+            f"marginkit's packaged schema v{version} is malformed: missing root 'properties'"
+        )
+    defs = schema.get("$defs")
+    if not isinstance(defs, dict):
+        raise TypeError(f"marginkit's packaged schema v{version} is malformed: missing '$defs'")
+
+    result: dict[str, frozenset[str]] = {"Scorecard": frozenset(str(k) for k in root_properties)}
+    for name in ("GridBreakPoint", "Fit", "Threshold", "Ratio"):
+        node = defs.get(name)
+        if not isinstance(node, dict):
+            raise TypeError(
+                f"marginkit's packaged schema v{version} is malformed: missing '$defs.{name}'"
+            )
+        node_properties = node.get("properties")
+        if not isinstance(node_properties, dict):
+            raise TypeError(
+                f"marginkit's packaged schema v{version} is malformed: missing "
+                f"'$defs.{name}.properties'"
+            )
+        result[name] = frozenset(str(k) for k in node_properties)
+    return result
+
+
 def _validated_fields(
     cls: type, data: object, *, tagged: bool, card_version: str | None = None
 ) -> dict[str, Any]:
@@ -329,7 +387,6 @@ def _validated_fields(
 
     fields = dataclasses.fields(cls)
     field_names = {f.name for f in fields}
-    allowed = field_names | ({"type"} if tagged else set())
 
     schema_version = SCHEMA_VERSION
     if "schema_version" in field_names:
@@ -339,6 +396,15 @@ def _validated_fields(
                 f"from_dict: unknown schema_version {schema_version!r} for {cls.__name__}, "
                 f"expected one of {sorted(_SUPPORTED_SCHEMA_VERSIONS)!r}"
             )
+
+    # A tagged type's allowed keys come from *that version's own packaged schema*, not from the
+    # current dataclass's field names (api-compat finding 1, `decisions/0023` Amendment 2): a
+    # `"1"`- or `"2"`-tagged `Fit` payload carrying `diagnostics`/`monotonicity` -- fields that
+    # version's own schema document never had -- must be rejected as unknown, even though the
+    # *current* `Fit` dataclass does have those fields. An untagged helper type has no per-version
+    # schema entry of its own to check against (it is never in `_SUPPORTED_SCHEMA_VERSIONS`'
+    # version history independently), so it still allows exactly its current dataclass fields.
+    allowed = _schema_properties_by_type(schema_version)[cls.__name__] if tagged else field_names
 
     unknown = set(data) - allowed
     if unknown:
@@ -411,6 +477,32 @@ def _covariance_from_dict(data: object, card_version: str | None) -> Covariance:
     return Covariance(**fields)
 
 
+def _adjacent_pair_from_dict(data: object, card_version: str | None) -> AdjacentPair:
+    """``AdjacentPair`` is an untagged helper, like ``Cell`` and ``Parameter``: it only ever
+    appears inside ``MonotonicityCheck.pairs``, never as a card's top-level result.
+    """
+    fields = _validated_fields(AdjacentPair, data, tagged=False, card_version=card_version)
+    return AdjacentPair(**fields)
+
+
+def _monotonicity_check_from_dict(data: object, card_version: str | None) -> MonotonicityCheck:
+    """``MonotonicityCheck`` is an untagged helper, like ``BaselineRate``: it only ever appears
+    as ``Fit.monotonicity`` (`decisions/0023` "Amendment 1").
+    """
+    fields = _validated_fields(MonotonicityCheck, data, tagged=False, card_version=card_version)
+    fields["pairs"] = tuple(_adjacent_pair_from_dict(p, card_version) for p in fields["pairs"])
+    return MonotonicityCheck(**fields)
+
+
+def _diagnostics_from_dict(data: object, card_version: str | None) -> Diagnostics:
+    """``Diagnostics`` is an untagged helper, like ``BaselineRate``: it only ever appears as
+    ``Fit.diagnostics`` (`decisions/0023`).
+    """
+    fields = _validated_fields(Diagnostics, data, tagged=False, card_version=card_version)
+    fields["link_status"] = {k: Status(v) for k, v in fields["link_status"].items()}
+    return Diagnostics(**fields)
+
+
 def _fit_from_dict(data: object, card_version: str | None) -> Fit:
     fields = _validated_fields(Fit, data, tagged=True, card_version=card_version)
     fields["axis"] = _axis_from_dict(fields["axis"], card_version)
@@ -424,6 +516,14 @@ def _fit_from_dict(data: object, card_version: str | None) -> Fit:
         fields["covariance"] = _covariance_from_dict(fields["covariance"], card_version)
     if fields.get("cluster_ids") is not None:
         fields["cluster_ids"] = tuple(fields["cluster_ids"])
+    # `diagnostics`/`monotonicity` are the appended fields of `decisions/0023` (Amendment 1 for
+    # the latter). `_validated_fields` fills a key a card omits from the dataclass default
+    # (`None`), so a card written before this phase decodes with both `None` and needs no
+    # special case beyond the nested-object conversion below.
+    if fields.get("diagnostics") is not None:
+        fields["diagnostics"] = _diagnostics_from_dict(fields["diagnostics"], card_version)
+    if fields.get("monotonicity") is not None:
+        fields["monotonicity"] = _monotonicity_check_from_dict(fields["monotonicity"], card_version)
     return Fit(**fields)
 
 
@@ -527,9 +627,11 @@ def from_dict(data: object) -> object:
     -------
     object
         An instance of the type named by ``data["type"]``. ``from_dict(to_dict(x)) == x`` for
-        every ``x`` of these five types. A ``schema_version`` ``"1"`` card (written before
-        `decisions/0022`) round-trips too: ``"1"`` and ``"2"`` are both accepted (Appendix B
-        item 4), and a ``"1"`` card's own ``Ratio.shape`` was never ``HALF_OPEN``.
+        every ``x`` of these five types. A ``schema_version`` ``"1"`` or ``"2"`` card (written
+        before `decisions/0022`/`decisions/0023` respectively) round-trips too: ``"1"``, ``"2"``
+        and ``"3"`` are all accepted (Appendix B item 4); a ``"1"`` card's own ``Ratio.shape`` was
+        never ``HALF_OPEN``, and neither a ``"1"`` nor a ``"2"`` card's ``Fit`` ever carried
+        ``diagnostics``/``monotonicity`` (both decode as ``None``).
 
     Raises
     ------
@@ -558,9 +660,9 @@ def load_schema(version: str = SCHEMA_VERSION) -> dict[str, object]:
     ----------
     version
         Which packaged schema version to load. Defaults to :data:`SCHEMA_VERSION` (the current
-        one, ``"2"`` as of `decisions/0022`); ``"1"`` is also packaged, so
-        ``load_schema("1")`` reads the schema a card written before `decisions/0022` was
-        actually validated against.
+        one, ``"3"`` as of `decisions/0023`); ``"1"`` and ``"2"`` are also packaged, so
+        ``load_schema("1")``/``load_schema("2")`` read the schema a card written before
+        `decisions/0022`/`decisions/0023` respectively was actually validated against.
 
     Returns
     -------

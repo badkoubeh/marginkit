@@ -257,6 +257,29 @@ class TestPpoSensorNoiseNonMonotoneContradiction:
         # meaningful precisely where the exact bounds have stopped being so.
         assert t.grid is not None
 
+    def test_warning_starts_with_the_non_monotone_token(self) -> None:
+        """The ``NON_MONOTONE: `` token (``decisions/0011``'s second amendment) is the supported
+        way a consumer detects this condition. Plan section 5.7 / ``decisions/0023`` adds a
+        *separate*, adjacent-pair monotonicity check on ``Fit`` (``diagnose()``), but explicitly
+        leaves this token unchanged (``decisions/0023``'s consequence 5: "changing that token is
+        breaking") -- pinned here directly, since no test previously asserted the literal token
+        despite ``censoring.py``'s own comment claiming it was load-bearing.
+        """
+        obs = _observations_for(
+            "ppo_sensor_noise", axis_name="sensor_noise", axis_unit="m", axis_scale="log"
+        )
+        fit = fit_dose_response(obs, model="binomial", link="probit", upper="estimate", lower=0.0)
+        assert fit.status is Status.SEPARATION
+
+        t = threshold(
+            fit,
+            definition=Definition.absolute(self._TARGET),
+            interval_method="profile",
+            level=_LEVEL,
+        )
+
+        assert any(w.startswith("NON_MONOTONE: ") for w in t.warnings)
+
 
 class TestPpoMassSignedAxis:
     """``ppo_mass`` is signed (``-0.2`` .. ``+0.2``); ``Observations`` rejects negative

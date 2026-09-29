@@ -25,6 +25,16 @@ which lets the test reach the actual ``ratio_interval(..., dependence="paired")`
 what it always meant to: that a v0.2 feature requested early raises ``ValueError``, per
 ``threshold()``'s own existing precedent for the same request and
 ``tests/unit/test_ratio_interval_guards.py::TestPairedDependenceNotImplemented``.
+
+**Edit recorded (owner-approved, 2026-09-27, decisions/0023 Amendment 1's sanctioned break, item
+6):** ``fit_dose_response`` now threads its own ``dependence`` argument through to
+``check_monotonicity`` (Amendment 1's own clustered-input guard), so a clustered ``Observations``
+now needs ``dependence="independent"`` at *fit* time too, not only at the later ``threshold()``/
+``ratio_interval()`` calls this file already passed it to. Both ``fit_dose_response(...)`` calls
+in this file gained ``dependence="independent"``, with a comment citing the amendment; no
+assertion changed, since ``Fit.cluster_ids`` is set from the input data regardless of which
+``dependence`` the fit itself was built with, and every downstream assertion in this file already
+depended only on that.
 """
 
 from __future__ import annotations
@@ -93,6 +103,27 @@ def test_clustered_observations_cells_totals_match_the_per_level_schedule() -> N
     assert obs.cells() == expected
 
 
+def test_fit_dose_response_on_clustered_input_without_dependence_raises() -> None:
+    """decisions/0023 Amendment 1, item 6: ``fit_dose_response`` now threads its own
+    ``dependence`` argument through to the monotonicity check it computes before choosing a
+    fitting path, so a clustered ``Observations`` with no ``dependence=`` raises at *fit* time,
+    not only at the later ``threshold()``/``ratio_interval()`` calls this file already covers."""
+    from marginkit import fit_dose_response
+
+    severity, success, cluster = _clustered_rows()
+    obs = Observations.from_observations(
+        _AXIS,
+        severity=severity,
+        success=success,
+        outcome="consistent",
+        direction="decreasing",
+        cluster=cluster,
+    )
+
+    with pytest.raises(ValueError):
+        fit_dose_response(obs, model="binomial", link="probit", upper=1.0, lower=0.0)
+
+
 def test_threshold_on_clustered_input_without_independent_dependence_raises() -> None:
     """R2: a method that assumes independence must refuse clustered input outright."""
     from marginkit import Definition, fit_dose_response, threshold
@@ -106,7 +137,12 @@ def test_threshold_on_clustered_input_without_independent_dependence_raises() ->
         direction="decreasing",
         cluster=cluster,
     )
-    fit = fit_dose_response(obs, model="binomial", link="probit", upper=1.0, lower=0.0)
+    # decisions/0023 Amendment 1: fit_dose_response now threads dependence through to its own
+    # clustered-input guard (the monotonicity check), so clustered data needs it here too --
+    # threshold() below still gets no dependence= of its own, which is what this test checks.
+    fit = fit_dose_response(
+        obs, model="binomial", link="probit", upper=1.0, lower=0.0, dependence="independent"
+    )
 
     with pytest.raises(ValueError):
         threshold(fit, definition=Definition.absolute(0.5), interval_method="profile", level=0.95)
@@ -134,7 +170,11 @@ def test_paired_ratio_between_two_thresholds_on_the_same_clustered_fit_is_not_im
         direction="decreasing",
         cluster=cluster,
     )
-    fit = fit_dose_response(obs, model="binomial", link="probit", upper=1.0, lower=0.0)
+    # decisions/0023 Amendment 1: fit_dose_response now threads dependence through to its own
+    # clustered-input guard (the monotonicity check).
+    fit = fit_dose_response(
+        obs, model="binomial", link="probit", upper=1.0, lower=0.0, dependence="independent"
+    )
     t_a = threshold(
         fit,
         definition=Definition.absolute(0.5),

@@ -22,6 +22,14 @@ label (plan §5.3-§5.5), together with :class:`BaselineRate`, :class:`ExactRate
 As of ``0.1.0a4`` this release adds :func:`ratio_interval`, which solves for the ratio of two
 thresholds' severities with a Fieller or log-delta confidence interval (plan §5.6).
 
+As of ``0.1.0`` this release adds :class:`Diagnostics` and :func:`diagnose` (model-only goodness
+of fit, dispersion and link comparison for a converged :class:`Fit`, plan §5.7), and
+:class:`MonotonicityCheck`, :class:`AdjacentPair` and :func:`check_monotonicity` (a data-only
+adjacent-severity-level check that needs only raw counts, computed on every
+:func:`fit_dose_response` return path regardless of ``Status`` -- `decisions/0023`, as amended by
+that decision's "Amendment 1"). Both are reported and never acted on automatically: neither
+changes a fitted parameter, a reported threshold, or which link a caller chose.
+
 Note that ``marginkit.threshold`` is now the *function*, not the submodule.
 """
 
@@ -47,20 +55,30 @@ from marginkit.types import (
     Observations,
     Status,
 )
+from marginkit.validation import (
+    AdjacentPair,
+    Diagnostics,
+    MonotonicityCheck,
+    check_monotonicity,
+    diagnose,
+)
 
-__version__ = "0.1.0a4"
+__version__ = "0.1.0"
 
 __all__ = [
+    "AdjacentPair",
     "Axis",
     "BaselineRate",
     "Cell",
     "Censoring",
     "Covariance",
     "Definition",
+    "Diagnostics",
     "ExactRates",
     "Fit",
     "GridBreakPoint",
     "IntervalShape",
+    "MonotonicityCheck",
     "Observations",
     "Parameter",
     "Prediction",
@@ -69,6 +87,8 @@ __all__ = [
     "Status",
     "Threshold",
     "__version__",
+    "check_monotonicity",
+    "diagnose",
     "fit_dose_response",
     "grid_break_point",
     "per_cell_clopper_pearson",

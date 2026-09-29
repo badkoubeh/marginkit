@@ -20,13 +20,16 @@ import pytest
 
 import marginkit
 from marginkit import (
+    AdjacentPair,
     Axis,
     Cell,
     Censoring,
     Covariance,
     Definition,
+    Diagnostics,
     Fit,
     GridBreakPoint,
+    MonotonicityCheck,
     Observations,
     Parameter,
     Ratio,
@@ -39,7 +42,16 @@ from marginkit.report import SCHEMA_VERSION, from_dict, load_schema, to_dict
 from marginkit.testing import fake_fit, fake_ratio, fake_threshold
 
 _TAGGED_TYPES: tuple[type, ...] = (Scorecard, GridBreakPoint, Fit, Threshold, Ratio)
-_HELPER_TYPES: tuple[type, ...] = (Axis, Definition, Cell, Parameter, Covariance)
+_HELPER_TYPES: tuple[type, ...] = (
+    Axis,
+    Definition,
+    Cell,
+    Parameter,
+    Covariance,
+    Diagnostics,
+    MonotonicityCheck,
+    AdjacentPair,
+)
 
 
 def _grid_result() -> GridBreakPoint:
@@ -336,12 +348,15 @@ class TestSchemaIsStrict:
     exactly ``["binomial"]`` -- not just documented as binomial-only by convention."""
 
     def test_fit_schema_rejects_an_extra_key(self) -> None:
+        # decisions/0023 made "diagnostics" a real Fit field (schema v3), so a genuinely-unknown
+        # marker key is needed here instead -- "diagnostics" itself would no longer trip this
+        # check.
         schema = load_schema()
         validator = jsonschema.Draft202012Validator(
             {"$defs": schema["$defs"], "$ref": "#/$defs/Fit"}
         )
         payload = to_dict(fake_fit())
-        payload["diagnostics"] = None
+        payload["not_a_real_field_at_all"] = None
 
         errors = list(validator.iter_errors(payload))
 
@@ -365,7 +380,19 @@ class TestSchemaFieldParity:
 
         assert schema_properties == field_names | {"type"}
 
-    @pytest.mark.parametrize("cls", [Axis, Definition, Cell, Parameter, Covariance])
+    @pytest.mark.parametrize(
+        "cls",
+        [
+            Axis,
+            Definition,
+            Cell,
+            Parameter,
+            Covariance,
+            Diagnostics,
+            MonotonicityCheck,
+            AdjacentPair,
+        ],
+    )
     def test_helper_types_match_their_defs_entry_without_a_type_tag(self, cls: type) -> None:
         schema = load_schema()
 
@@ -583,15 +610,18 @@ class TestFromDictNestedUnknownFieldNamesFieldAndBothVersions:
     reader's version."""
 
     def test_unknown_field_on_a_nested_fit_names_field_and_both_versions(self) -> None:
+        # decisions/0023 made "diagnostics" a real Fit field (schema v3): setting it to a value
+        # already present under its own default would no longer be an unknown field, so a
+        # distinct marker key is used instead.
         card = Scorecard(results=(fake_threshold(),), provenance={}, marginkit_version="9.9.9")
         payload = to_dict(card)
-        payload["results"][0]["fit"]["diagnostics"] = None
+        payload["results"][0]["fit"]["not_a_real_field_at_all"] = None
 
         with pytest.raises(ValueError) as exc_info:
             from_dict(payload)
 
         message = str(exc_info.value)
-        assert "diagnostics" in message
+        assert "not_a_real_field_at_all" in message
         assert "9.9.9" in message
         assert marginkit.__version__ in message
 
@@ -691,3 +721,161 @@ class TestThresholdBaselineAndGridRoundTrip:
 
         assert rebuilt.baseline is None
         assert rebuilt.grid is None
+
+
+# ------------------------------------------------------------------------------------------
+# Phase 7, decisions/0023: Fit.diagnostics, an appended field defaulting to None, serialised
+# under schema_version "3". Mirrors TestThresholdBaselineAndGridRoundTrip's own two-test shape:
+# a real value round-trips, and a card written before this field existed (no "diagnostics" key
+# at all) still loads, filling the dataclass default.
+# ------------------------------------------------------------------------------------------
+
+
+def _sample_diagnostics() -> Diagnostics:
+    """``Diagnostics`` is model-only as of decisions/0023's Amendment 1: no ``monotonicity``
+    entry here at all (that moved onto ``Fit.monotonicity`` directly -- see
+    ``_sample_monotonicity_check`` and ``TestFitMonotonicityRoundTrip`` below)."""
+    return Diagnostics(
+        deviance=1.23,
+        pearson_chi2=1.19,
+        df=2,
+        dispersion=0.595,
+        link_aic={"probit": 10.0, "logit": 10.5, "cloglog": None},
+        link_status={
+            "probit": Status.OK,
+            "logit": Status.OK,
+            "cloglog": Status.NOT_CONVERGED,
+        },
+        warnings=(),
+    )
+
+
+def _v2_shaped_fit_payload() -> dict[str, object]:
+    """A ``Fit`` payload shaped like a genuine v2 card: tagged ``schema_version="2"``, with
+    *neither* v3-only key present at all -- not merely ``null``, which a fresh v3
+    ``to_dict(fake_fit())`` would also produce, but which a real v1/v2 writer never emitted in
+    the first place, since the fields did not exist yet.
+
+    Before ``decisions/0023`` Amendment 2 item 4 ("fake_fit mirrors a real fit"), a fresh
+    ``fake_fit()`` left both fields ``None`` by default, so the two "written without the key"
+    tests below could use a plain ``to_dict(fake_fit())`` and assert ``is None`` first as a
+    precondition. Amendment 2 item 4 makes that precondition false: a fresh, ``Status.OK``
+    ``fake_fit()`` now always fills both through the real ``diagnose()``/``check_monotonicity()``
+    paths. What those two tests actually check -- a key that is *absent* loads as ``None``
+    (Appendix B item 4) -- is unchanged and still needs covering, so the base payload here is a
+    v2-shaped one instead: downgrading ``schema_version`` alone would not be enough, since
+    ``tests/unit/test_schema_rewrite_fidelity.py`` pins that a ``"2"``-tagged ``Fit`` carrying
+    either key (even ``null``) is rejected by ``from_dict`` -- so both keys are deleted here,
+    not just the one each test is about.
+    """
+    payload = to_dict(fake_fit())
+    payload["schema_version"] = "2"
+    del payload["diagnostics"]
+    del payload["monotonicity"]
+    return payload
+
+
+class TestFitDiagnosticsRoundTrip:
+    def test_fit_with_diagnostics_round_trips(self) -> None:
+        diagnostics = _sample_diagnostics()
+        fit = fake_fit(diagnostics=diagnostics)
+
+        rebuilt = from_dict(to_dict(fit))
+
+        assert rebuilt == fit
+        assert rebuilt.diagnostics == diagnostics
+
+    def test_fit_with_diagnostics_none_round_trips(self) -> None:
+        fit = fake_fit(diagnostics=None)
+
+        rebuilt = from_dict(to_dict(fit))
+
+        assert rebuilt == fit
+        assert rebuilt.diagnostics is None
+
+    def test_a_fit_written_without_a_diagnostics_key_still_loads(self) -> None:
+        """Simulates a card written before this field existed at all (a v2-shaped payload, see
+        ``_v2_shaped_fit_payload``): the key is absent outright, and ``from_dict`` must still
+        load the payload, filling the dataclass's own default (``None``) -- Appendix B item 4,
+        the same pattern as ``Threshold.baseline``/``.grid`` before it.
+        """
+        payload = _v2_shaped_fit_payload()
+
+        rebuilt = from_dict(payload)
+
+        assert rebuilt.diagnostics is None
+
+
+# ------------------------------------------------------------------------------------------
+# Phase 7, decisions/0023 Amendment 1: Fit.monotonicity, the *last* appended field, populated on
+# every fit_dose_response return path (unlike diagnostics, never None for a fresh OK-or-not
+# result) but still None on a card read from schema "1" or "2" (Amendment 1, item 8).
+# ------------------------------------------------------------------------------------------
+
+
+def _sample_monotonicity_check() -> MonotonicityCheck:
+    return MonotonicityCheck(
+        direction="decreasing",
+        alpha=0.05,
+        dependence="independent",
+        method="fisher_exact_one_sided_holm",
+        pairs=(
+            AdjacentPair(
+                severity_low=0.0,
+                severity_high=0.01,
+                successes_low=57,
+                trials_low=200,
+                successes_high=143,
+                trials_high=300,
+                p_value=1.1669624014235122e-05,
+                holm_adjusted_p=3.5008872042705366e-05,
+                flagged=True,
+            ),
+        ),
+        any_flagged=True,
+        warnings=(),
+    )
+
+
+class TestFitMonotonicityRoundTrip:
+    def test_fit_with_monotonicity_round_trips(self) -> None:
+        monotonicity = _sample_monotonicity_check()
+        fit = fake_fit(monotonicity=monotonicity)
+
+        rebuilt = from_dict(to_dict(fit))
+
+        assert rebuilt == fit
+        assert rebuilt.monotonicity == monotonicity
+
+    def test_fit_with_an_empty_pairs_tuple_round_trips(self) -> None:
+        empty = dataclasses.replace(
+            _sample_monotonicity_check(),
+            pairs=(),
+            any_flagged=False,
+            warnings=("fewer than two severity levels",),
+        )
+        fit = fake_fit(monotonicity=empty)
+
+        rebuilt = from_dict(to_dict(fit))
+
+        assert rebuilt == fit
+        assert rebuilt.monotonicity == empty
+
+    def test_fit_with_monotonicity_none_round_trips(self) -> None:
+        fit = fake_fit(monotonicity=None)
+
+        rebuilt = from_dict(to_dict(fit))
+
+        assert rebuilt == fit
+        assert rebuilt.monotonicity is None
+
+    def test_a_fit_written_without_a_monotonicity_key_still_loads(self) -> None:
+        """A card written before this field existed (a v2-shaped payload, see
+        ``_v2_shaped_fit_payload`` -- schema "1" or "2", predating even ``diagnostics``): the key
+        is absent outright, and ``from_dict`` must still load the payload, filling the dataclass
+        default (``None``) -- Amendment 1, item 8."""
+        payload = _v2_shaped_fit_payload()
+
+        rebuilt = from_dict(payload)
+
+        assert rebuilt.monotonicity is None

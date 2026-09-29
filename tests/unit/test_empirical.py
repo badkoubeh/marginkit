@@ -291,12 +291,13 @@ class TestProvenanceAndSchemaVersion:
 
     def test_default_schema_version_is_the_current_package_version(self) -> None:
         """``decisions/0022`` bumped the single, package-wide ``SCHEMA_VERSION`` to ``"2"`` (for
-        ``Ratio``'s new ``HALF_OPEN`` shape) -- ``GridBreakPoint``'s own default tracks the same
+        ``Ratio``'s new ``HALF_OPEN`` shape); ``decisions/0023`` has since bumped it again, to
+        ``"3"`` (``Fit.diagnostics``) -- ``GridBreakPoint``'s own default tracks the same
         constant, since ``report.py`` versions the whole card format, not each type
         independently. This test name no longer hardcodes which version that is."""
         result = grid_break_point([0.0, 5.0, 10.0], [1.0, 0.95, 0.4], criterion=0.95)
 
-        assert result.schema_version == "2"
+        assert result.schema_version == "3"
 
     def test_default_provenance_is_an_empty_mapping(self) -> None:
         import collections.abc
@@ -325,5 +326,6 @@ class TestProvenanceAndSchemaVersion:
         assert result.value == 0.1
         assert result.max_tested == 0.2
         assert result.censoring is Censoring.NONE
-        assert result.schema_version == "2"  # decisions/0022: package-wide SCHEMA_VERSION
+        # decisions/0022, decisions/0023: package-wide SCHEMA_VERSION
+        assert result.schema_version == "3"
         assert len(result.provenance) == 0

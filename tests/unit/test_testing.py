@@ -15,12 +15,21 @@ censoring propagation, not this phase.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import jsonschema
 import pytest
 
-from marginkit import Censoring, IntervalShape, Status
+from marginkit import (
+    Censoring,
+    Fit,
+    IntervalShape,
+    Observations,
+    Status,
+    check_monotonicity,
+    diagnose,
+)
 from marginkit.report import from_dict, load_schema, to_dict
 from marginkit.testing import fake_fit, fake_ratio, fake_threshold
 
@@ -107,6 +116,76 @@ class TestFakeFit:
         fit = fake_fit(provenance={"note": "test"})
 
         assert fit.provenance == {"note": "test"}
+
+
+def _observations_from_fit_cells(fit: Fit) -> Observations:
+    return Observations.from_counts(
+        fit.axis,
+        severity=[c.severity for c in fit.cells],
+        successes=[c.successes for c in fit.cells],
+        trials=[c.trials for c in fit.cells],
+        outcome=fit.outcome,
+        direction=fit.direction,
+    )
+
+
+class TestFakeFitMirrorsARealFit:
+    """decisions/0023 Amendment 2, item 4: ``fake_fit`` fills ``monotonicity`` through
+    :func:`~marginkit.check_monotonicity` on its own cells for *every* status, and
+    ``diagnostics`` through :func:`~marginkit.diagnose` when ``status`` is ``OK`` -- the same way
+    ``fake_threshold`` already builds ``baseline`` through the real
+    ``per_cell_clopper_pearson`` path rather than a hand-typed placeholder. Explicit
+    ``diagnostics=``/``monotonicity=`` arguments still override (unchanged from before this
+    amendment)."""
+
+    @pytest.mark.parametrize("status", _FIT_STATUSES)
+    def test_monotonicity_is_not_none_for_every_status(self, status: Status) -> None:
+        fit = fake_fit(status=status)
+
+        assert fit.monotonicity is not None
+
+    @pytest.mark.parametrize("status", _FIT_STATUSES)
+    def test_monotonicity_matches_check_monotonicity_on_the_same_cells(
+        self, status: Status
+    ) -> None:
+        fit = fake_fit(status=status)
+
+        assert fit.monotonicity == check_monotonicity(_observations_from_fit_cells(fit))
+
+    def test_diagnostics_is_not_none_when_status_is_ok(self) -> None:
+        fit = fake_fit(status=Status.OK)
+
+        assert fit.diagnostics is not None
+
+    @pytest.mark.parametrize("status", [s for s in _FIT_STATUSES if s is not Status.OK])
+    def test_diagnostics_is_none_when_status_is_not_ok(self, status: Status) -> None:
+        fit = fake_fit(status=status)
+
+        assert fit.diagnostics is None
+
+    def test_diagnostics_matches_diagnose_on_the_same_fit(self) -> None:
+        fit = fake_fit(status=Status.OK)
+
+        assert fit.diagnostics == diagnose(fit)
+
+    def test_explicit_diagnostics_argument_still_overrides(self) -> None:
+        # Overriding `warnings` (rather than a GOF field) sidesteps Diagnostics's own
+        # cross-field invariants entirely -- this test only needs a distinguishable sentinel,
+        # not a semantically meaningful one.
+        real = diagnose(fake_fit(status=Status.OK))
+        sentinel = dataclasses.replace(real, warnings=(*real.warnings, "override marker"))
+
+        fit = fake_fit(status=Status.OK, diagnostics=sentinel)
+
+        assert fit.diagnostics == sentinel
+
+    def test_explicit_monotonicity_argument_still_overrides(self) -> None:
+        real = check_monotonicity(_observations_from_fit_cells(fake_fit()))
+        sentinel = dataclasses.replace(real, warnings=(*real.warnings, "override marker"))
+
+        fit = fake_fit(monotonicity=sentinel)
+
+        assert fit.monotonicity == sentinel
 
 
 class TestFakeThreshold:

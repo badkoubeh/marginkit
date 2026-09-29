@@ -101,7 +101,20 @@ fit_glm <- function(link) {
     coef = named_vec_to_list(coef(g)),
     vcov = matrix_to_fixture(vcov(g)),
     logLik = as.numeric(logLik(g)),
-    converged = isTRUE(g$converged)
+    converged = isTRUE(g$converged),
+    # decisions/0023 (Phase 7 diagnostics): R-native goodness-of-fit fields, added so
+    # tests/reference/test_diagnostics_drc.py's TestAgainstRNativeGofFields class has a second,
+    # fully R-computed cross-check independent of that file's own Python recomputation from
+    # coef/logLik above. df_residual is 3 (fdat, the dose>0 subset, has 5 rows; 2 estimated
+    # parameters; 5-2=3) -- fdat never contains the dose=0 row at all (it was subsetted out above
+    # because log(0) is undefined, not because glm() drops it itself), which is what makes this
+    # comparable to marginkit's own diagnose(), whose *own* exclusion of the dose=0 control is
+    # structural (decisions/0023 Amendment 2, item 1: a log-axis severity-0 cell under a fixed
+    # upper=1.0), not a coincidence of the two happening to remove the same row.
+    deviance = as.numeric(deviance(g)),
+    pearson_chi2 = as.numeric(sum(residuals(g, type = "pearson")^2)),
+    df_residual = as.numeric(df.residual(g)),
+    AIC = as.numeric(AIC(g))
   )
 }
 glm_probit <- fit_glm("probit")
@@ -204,6 +217,25 @@ finney71_fixture <- list(
   ),
   mapping = mapping_finney71,
   loglik_parity = loglik_parity,
+  df_comparison_note = list(
+    drc_df_residual = as.numeric(nrow(finney71) - length(coef(m_ln))),
+    glm_df_residual = as.numeric(nrow(fdat) - length(coef(g_probit_obj))),
+    marginkit_diagnose_df = as.numeric(nrow(fdat) - length(coef(g_probit_obj))),
+    note = paste(
+      "decisions/0023 Amendment 2's factual correction: drc's drm() fits the FULL 6-row",
+      "finney71 (LN.2/LL.2 handle dose=0 directly on the log scale), so drc's own residual df",
+      "is 4 (6 rows - 2 parameters). glm() here and marginkit's diagnose() both report df=3",
+      "(5 rows - 2 parameters), but for two DIFFERENT reasons that happen to agree on this",
+      "dataset: this script subsets the dose=0 row out of fdat before ever calling glm(),",
+      "because log(0) is undefined and would make the glm() call itself fail -- glm() does not",
+      "'drop' the row on its own. marginkit's diagnose(), by contrast, fits all 6 rows and then",
+      "excludes the dose=0 cell from its own deviance/Pearson/df computation STRUCTURALLY (a",
+      "log-axis severity-0 cell under a fixed upper=1.0), never because a computed probability",
+      "happens to round to exactly 1.0 (the pre-Amendment-2 bug, C1). drc's df=4 is not directly",
+      "comparable to either: it is neither subsetting nor structural exclusion, just an ordinary",
+      "fit on all 6 rows."
+    )
+  ),
   drc = list(
     LN2 = list(
       fct = "LN.2", link = "probit",
@@ -479,5 +511,49 @@ estimated_fixture <- list(
   )
 )
 write_fixture(estimated_fixture, "estimated_asymptotes.json")
+
+# =================================================================================================
+# 5. decisions/0023 Amendment 1: the zeta PPO x sensor_noise monotonicity reversal's raw one-sided
+#    Fisher exact p-value, from R directly -- 57/200 at severity 0.0 vs 143/300 at severity 0.01
+#    (tests/data/zeta_matrix_counts.csv). marginkit's own check_monotonicity() tests this same
+#    pair against scipy's fisher_exact (tests/unit/test_monotonicity.py) and, once this fixture is
+#    regenerated, against this R-native number too (tests/reference/test_monotonicity_drc.py).
+# =================================================================================================
+
+ppo_severity_0 <- c(successes = 57, trials = 200)
+ppo_severity_0_01 <- c(successes = 143, trials = 300)
+
+# marginkit's own table/alternative convention (decisions/0023 Amendment 1, item 4): for
+# direction="decreasing" with a success outcome, [[successes_high, failures_high],
+# [successes_low, failures_low]], alternative="greater" -- "the higher severity performs better".
+ppo_table <- matrix(
+  c(
+    ppo_severity_0_01["successes"], ppo_severity_0_01["trials"] - ppo_severity_0_01["successes"],
+    ppo_severity_0["successes"], ppo_severity_0["trials"] - ppo_severity_0["successes"]
+  ),
+  nrow = 2, byrow = TRUE
+)
+ppo_fisher <- fisher.test(ppo_table, alternative = "greater")
+
+ppo_monotonicity_fixture <- list(
+  versions = versions,
+  dataset = list(
+    series = "ppo_sensor_noise",
+    severity_low = 0.0,
+    severity_high = 0.01,
+    successes_low = as.numeric(ppo_severity_0["successes"]),
+    trials_low = as.numeric(ppo_severity_0["trials"]),
+    successes_high = as.numeric(ppo_severity_0_01["successes"]),
+    trials_high = as.numeric(ppo_severity_0_01["trials"]),
+    note = "tests/data/zeta_matrix_counts.csv, series ppo_sensor_noise, the two lowest severities."
+  ),
+  fisher_test = list(
+    alternative = "greater",
+    table_convention = "matrix(c(successes_high, failures_high, successes_low, failures_low), nrow=2, byrow=TRUE) -- marginkit's own convention, decisions/0023 Amendment 1 item 4",
+    p_value = as.numeric(ppo_fisher$p.value),
+    estimate_odds_ratio = as.numeric(ppo_fisher$estimate)
+  )
+)
+write_fixture(ppo_monotonicity_fixture, "zeta_ppo_sensor_noise_monotonicity.json")
 
 cat("\nAll fixtures written under", out_dir, "\n")

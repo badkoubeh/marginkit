@@ -136,10 +136,15 @@ class Threshold:
         The :class:`~marginkit.Fit` this threshold was solved from. Per-level trial counts
         (R10) live on ``fit.cells``, not on a separate field.
     warnings
-        Free-text notes surfaced alongside the threshold. Empty by default.
+        Free-text notes surfaced alongside the threshold. Empty by default. Carries a
+        ``"NON_MONOTONE_DATA: "``-prefixed entry whenever ``fit.monotonicity.any_flagged``
+        (`decisions/0023` "Amendment 1"), whatever ``status``/``censoring`` turn out to be --
+        distinct from :mod:`marginkit.censoring`'s own ``"NON_MONOTONE: "`` token, which compares
+        exact one-sided bounds against the *fitted* curve rather than testing raw adjacent
+        levels; the two may disagree and both are reported when they fire.
     schema_version
-        The serialised-result schema version this object belongs to. Defaults to ``"2"``
-        (`decisions/0022`); ``from_dict`` still reads a ``"1"`` card.
+        The serialised-result schema version this object belongs to. Defaults to ``"3"``
+        (`decisions/0023`); ``from_dict`` still reads ``"1"`` and ``"2"`` cards.
     provenance
         An opaque mapping the caller may attach to record where the inputs came from.
         marginkit stores it and never interprets it. Empty by default.
@@ -166,7 +171,7 @@ class Threshold:
     dependence: str
     fit: Fit
     warnings: tuple[str, ...] = ()
-    schema_version: str = "2"
+    schema_version: str = "3"
     provenance: Mapping[str, JSONValue] = field(default_factory=dict)
     baseline: BaselineRate | None = None
     grid: GridBreakPoint | None = None
@@ -507,6 +512,22 @@ def threshold(
 
     target, target_warning = _resolve_target(definition, fit=fit)
     collected_warnings: list[str] = [] if target_warning is None else [target_warning]
+
+    # decisions/0023 Amendment 1, item 7: applies whatever the resulting censoring or status,
+    # because every threshold rule and every fitted model assume the true performance curve is
+    # monotone in severity. Never changes value/lo/hi/status/censoring -- only adds a warning.
+    if fit.monotonicity is not None and fit.monotonicity.any_flagged:
+        flagged_pairs = ", ".join(
+            f"({pair.severity_low!r}, {pair.severity_high!r})"
+            for pair in fit.monotonicity.pairs
+            if pair.flagged
+        )
+        collected_warnings.append(
+            "NON_MONOTONE_DATA: threshold: fit.monotonicity flags an adjacent-level reversal "
+            f"at severity pair(s) {flagged_pairs} (decisions/0023 Amendment 1); every threshold "
+            "rule and every fitted model here assume the true performance curve is monotone in "
+            "severity"
+        )
 
     classification = classify(fit, target=target, level=level)
     collected_warnings.extend(classification.warnings)

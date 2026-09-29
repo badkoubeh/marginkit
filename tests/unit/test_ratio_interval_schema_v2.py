@@ -1,5 +1,11 @@
 """``decisions/0022``: ``schema_version`` becomes ``"2"``, and ``HALF_OPEN`` is part of it.
 
+**Update (decisions/0023):** ``SCHEMA_VERSION`` has since been bumped again, to ``"3"``
+(``Fit.diagnostics``, ``tests/unit/test_schema_v3.py``). This file's own subject -- ``HALF_OPEN``
+validating against the packaged v2 document, and the v1 document staying ignorant of it -- is
+unchanged by that bump, so the tests below still assert it; only the *current* ``SCHEMA_VERSION``
+a freshly-built object carries has moved from ``"2"`` to ``"3"``.
+
 Four things this file pins down, per Appendix B and the decision's own "Consequences":
 
 1. A `HALF_OPEN` :class:`~marginkit.Ratio` (built through :func:`marginkit.testing.fake_ratio`,
@@ -8,8 +14,8 @@ Four things this file pins down, per Appendix B and the decision's own "Conseque
 2. The **v1** schema, which stays packaged unchanged for the reader path, does not know
    ``HALF_OPEN`` -- a card written before ``0022`` could never have contained one, so the v1
    schema must reject it, not silently accept a shape it predates.
-3. A freshly-built card round-trips through JSON at ``schema_version == "2"`` throughout,
-   ``HALF_OPEN`` included.
+3. A freshly-built card round-trips through JSON at its current ``schema_version`` (``"3"`` as of
+   decisions/0023) throughout, ``HALF_OPEN`` included.
 4. A card stored under ``schema_version == "1"`` (built here by taking a fresh card and
    recursively downgrading every ``schema_version`` key to ``"1"`` -- the "build one" option
    Appendix B leaves open, chosen over a frozen fixture because there is no genuine historical
@@ -52,11 +58,15 @@ def _downgrade_schema_version(obj: Any, version: str) -> Any:
 
 
 class TestSchemaVersionIsNowTwo:
-    def test_schema_version_constant_is_2(self) -> None:
-        assert SCHEMA_VERSION == "2"
+    """decisions/0023 has since bumped ``SCHEMA_VERSION`` again, to ``"3"`` (``Fit.diagnostics``)
+    -- these assertions now check the *current* value, not literally "two"; this class's own
+    name and this file's HALF_OPEN-specific content still document decisions/0022 accurately."""
 
-    def test_a_freshly_built_ratio_defaults_to_schema_version_2(self) -> None:
-        assert fake_ratio().schema_version == "2"
+    def test_schema_version_constant_is_3(self) -> None:
+        assert SCHEMA_VERSION == "3"
+
+    def test_a_freshly_built_ratio_defaults_to_schema_version_3(self) -> None:
+        assert fake_ratio().schema_version == "3"
 
 
 class TestFakeRatioBuildsAGenuineHalfOpenResult:
@@ -81,7 +91,9 @@ class TestFakeRatioBuildsAGenuineHalfOpenResult:
 class TestHalfOpenRatioValidatesAgainstTheV2Schema:
     def test_half_open_ratio_has_no_schema_errors_under_v2(self) -> None:
         ratio = fake_ratio(shape=IntervalShape.HALF_OPEN, status=Status.OK)
-        schema = load_schema()  # defaults to SCHEMA_VERSION, i.e. v2
+        # decisions/0023 bumped SCHEMA_VERSION again, to "3": this now loads the current (v3)
+        # schema, which still carries HALF_OPEN unchanged from v2.
+        schema = load_schema()
         validator = jsonschema.Draft202012Validator(
             {"$defs": schema["$defs"], "$ref": "#/$defs/Ratio"}
         )
@@ -132,8 +144,10 @@ class TestV2CardRoundTripsWithAHalfOpenRatio:
         reloaded = from_dict(json.loads(text))
 
         assert reloaded == card
-        assert payload["schema_version"] == "2"
-        assert payload["results"][0]["schema_version"] == "2"
+        # decisions/0023 bumped SCHEMA_VERSION again, to "3"; a freshly-built card now carries
+        # that value throughout, HALF_OPEN included.
+        assert payload["schema_version"] == "3"
+        assert payload["results"][0]["schema_version"] == "3"
 
 
 class TestV1CardStillLoads:
@@ -150,7 +164,9 @@ class TestV1CardStillLoads:
 
     def test_a_downgraded_v1_grid_result_card_loads_and_keeps_version_1(self) -> None:
         grid = grid_break_point([0.0, 5.0, 10.0], [1.0, 0.95, 0.4], criterion=0.95)
-        assert grid.schema_version == "2"  # freshly built: confirms the downgrade below is real
+        # decisions/0023 bumped SCHEMA_VERSION again, to "3": freshly built, confirms the
+        # downgrade below is real.
+        assert grid.schema_version == "3"
         card = Scorecard(results=(grid,), provenance={})
 
         payload = to_dict(card)
@@ -167,7 +183,7 @@ class TestV1CardStillLoads:
 
     def test_v1_payload_schema_version_999_still_raises(self) -> None:
         """Sanity check on the downgrade helper itself: a version outside
-        ``_SUPPORTED_SCHEMA_VERSIONS`` (module docstring's ``{"1", "2"}``) must still be
+        ``_SUPPORTED_SCHEMA_VERSIONS`` (``{"1", "2", "3"}`` as of decisions/0023) must still be
         rejected -- accepting "1" is a deliberate widening, not "any string goes"."""
         grid = grid_break_point([0.0, 5.0, 10.0], [1.0, 0.95, 0.4], criterion=0.95)
         card = Scorecard(results=(grid,), provenance={})

@@ -301,12 +301,16 @@ def _contradiction_warning(
 ) -> str:
     return (
         # `decisions/0011`'s second amendment: the leading `NON_MONOTONE: ` token is the
-        # supported way to detect this condition until plan section 5.7's structured diagnostic
-        # lands in Phase 7. On a converged fit this warning is the *only* signal -- `grid` is
-        # legal only for SEPARATION/NOT_CONVERGED (`decisions/0010`), so a consumer filtering on
-        # `status is OK and censoring is NONE` would otherwise see a clean bounded interval from
-        # data the exact tests just proved inconsistent with any monotone curve. Changing or
-        # removing this token is a behaviourally breaking change.
+        # supported way to detect this condition -- distinct from `Fit.monotonicity`'s own
+        # structured, data-only adjacent-level check (`decisions/0023` "Amendment 1"), which
+        # compares raw counts against each other rather than exact bounds against the *fitted*
+        # curve; the two can disagree, and both are reported when they fire (see
+        # `threshold.py`'s `"NON_MONOTONE_DATA: "` token). On a converged fit this warning is the
+        # *only* signal of *this* kind of contradiction -- `grid` is legal only for
+        # SEPARATION/NOT_CONVERGED (`decisions/0010`), so a consumer filtering on `status is OK
+        # and censoring is NONE` would otherwise see a clean bounded interval from data the exact
+        # tests just proved inconsistent with any monotone curve. Changing or removing this token
+        # is a behaviourally breaking change.
         "NON_MONOTONE: censoring.classify: exact one-sided tests at confidence "
         f"{level} contradict monotonicity (decisions/0011): severity {lo_severity} confidently "
         f"passes (lower bound {lo_bound!r} >= target {target!r}) while the lower severity "

@@ -253,7 +253,11 @@ class TestClusterIdsPassthrough:
             cluster=cluster,
         )
 
-        fit = fit_dose_response(obs, model="binomial", link="probit", upper=1.0, lower=0.0)
+        # decisions/0023 Amendment 1: fit_dose_response now threads dependence through to its
+        # own clustered-input guard (the monotonicity check).
+        fit = fit_dose_response(
+            obs, model="binomial", link="probit", upper=1.0, lower=0.0, dependence="independent"
+        )
 
         assert fit.cluster_ids is not None
         assert set(fit.cluster_ids) == set(obs.cluster or ())

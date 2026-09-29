@@ -4,7 +4,7 @@
     "drc_version": "3.0.1",
     "mass_version": "7.3.65",
     "jsonlite_version": "2.0.0",
-    "generated_at": "2026-09-17 01:21:26 UTC"
+    "generated_at": "2026-09-29 01:23:03 UTC"
   },
   "note": "Independent R implementation of the offset-trick profile likelihood (plan section 5.4, 6.2), fit on the same finney71 dose>0 subset as the glm probit fixture above. theta is log(dose); zstar is qnorm(target proportion) for the ED50 (0 for probit p=0.5).",
   "model": "probit, fixed upper=1 lower=0, finney71 dose>0 subset",

@@ -4,7 +4,7 @@
     "drc_version": "3.0.1",
     "mass_version": "7.3.65",
     "jsonlite_version": "2.0.0",
-    "generated_at": "2026-09-17 01:21:26 UTC"
+    "generated_at": "2026-09-29 01:23:03 UTC"
   },
   "dataset": {
     "dose": [10.2, 7.7, 5.1, 3.8, 2.6, 0],
@@ -32,6 +32,12 @@
     "glm_probit_dose_gt_0_subset": -10.4796826974705,
     "manual_full_binomial_loglik_on_drc_LN2_fitted_values": -10.4796827595705,
     "note": "drc's logLik() is the FULL binomial log-likelihood, including the binomial coefficient (confirmed by matching a manual lchoose-based computation on drc's own fitted values). Dropping the all-success dose=0 control row from the GLM likelihood (marginkit section 5.1's rule for the fixed u=1,l=0 path) changes the log-likelihood by exactly 0, because an n_successes=0-failure row's binomial log-likelihood term (lchoose(n,0) + n*log(1)) is identically 0 -- this is a mathematical identity, not a coincidence of this dataset."
+  },
+  "df_comparison_note": {
+    "drc_df_residual": 4,
+    "glm_df_residual": 3,
+    "marginkit_diagnose_df": 3,
+    "note": "decisions/0023 Amendment 2's factual correction: drc's drm() fits the FULL 6-row finney71 (LN.2/LL.2 handle dose=0 directly on the log scale), so drc's own residual df is 4 (6 rows - 2 parameters). glm() here and marginkit's diagnose() both report df=3 (5 rows - 2 parameters), but for two DIFFERENT reasons that happen to agree on this dataset: this script subsets the dose=0 row out of fdat before ever calling glm(), because log(0) is undefined and would make the glm() call itself fail -- glm() does not 'drop' the row on its own. marginkit's diagnose(), by contrast, fits all 6 rows and then excludes the dose=0 cell from its own deviance/Pearson/df computation STRUCTURALLY (a log-axis severity-0 cell under a fixed upper=1.0), never because a computed probability happens to round to exactly 1.0 (the pre-Amendment-2 bug, C1). drc's df=4 is not directly comparable to either: it is neither subsetting nor structural exclusion, just an ordinary fit on all 6 rows."
   },
   "drc": {
     "LN2": {
@@ -133,7 +139,11 @@
         ]
       },
       "logLik": -10.4796826974705,
-      "converged": true
+      "converged": true,
+      "deviance": 1.73896859541119,
+      "pearson_chi2": 1.72887505903824,
+      "df_residual": 3,
+      "AIC": 24.9593653949411
     },
     "logit": {
       "link": "logit",
@@ -150,7 +160,11 @@
         ]
       },
       "logLik": -10.3222266921692,
-      "converged": true
+      "converged": true,
+      "deviance": 1.42405658480855,
+      "pearson_chi2": 1.4217948783323,
+      "df_residual": 3,
+      "AIC": 24.6444533843385
     },
     "cloglog": {
       "link": "cloglog",
@@ -167,7 +181,11 @@
         ]
       },
       "logLik": -11.7735546092448,
-      "converged": true
+      "converged": true,
+      "deviance": 4.32671241895965,
+      "pearson_chi2": 4.32722511763368,
+      "df_residual": 3,
+      "AIC": 27.5471092184896
     }
   },
   "mass_dose_p": {

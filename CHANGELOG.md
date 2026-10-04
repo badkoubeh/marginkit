@@ -13,13 +13,16 @@ satisfy the public-API change checklist in `docs/IMPLEMENTATION_PLAN.md` Appendi
 
 ## [0.1.1] -- unreleased
 
-Packaging only, and the first release published on PyPI (`decisions/0024`), to be tagged `v0.1.1`.
+Packaging only, prepared as the first PyPI release (`decisions/0024`), to be tagged `v0.1.1` once publishing to PyPI is possible.
 No code, public API, schema or numeric change from 0.1.0; upgrading needs nothing.
 
 ### Changed
-- Install with `pip install marginkit`. The README's install section, and its links to
-  `docs/PROVENANCE.md`, `CHANGELOG.md` and `LICENSE`, now work on the PyPI project page, where
-  relative links break.
+- The README's links to `docs/PROVENANCE.md`, `CHANGELOG.md` and `LICENSE` are absolute, so they
+  work on the PyPI project page, where relative links break. They point at the `marginkit`
+  GitHub organization, which now owns the repository.
+- Not yet on PyPI: the `marginkit` name there is held by another account, and a PEP 541 request
+  is pending (`decisions/0024` Amendment 1). Until it is granted, install from the git tag; the
+  README switches to `pip install marginkit` in the release that first reaches PyPI.
 - `[project.urls]` adds the source repository and the issue tracker, next to the existing
   homepage and changelog links.
 - Releases are built and published by `.github/workflows/release.yml` through PyPI Trusted

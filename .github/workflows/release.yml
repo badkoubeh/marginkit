@@ -4,7 +4,7 @@
 #
 # One-time setup, done by the owner:
 #   - pypi.org and test.pypi.org: add a pending publisher for project `marginkit`,
-#     owner `badkoubeh`, repository `marginkit`, workflow `release.yml`,
+#     owner `marginkit` (the GitHub organization), repository `marginkit`, workflow `release.yml`,
 #     environment `pypi` (pypi.org) or `testpypi` (test.pypi.org).
 #   - GitHub: create environments `testpypi` and `pypi`, the latter with the owner as a
 #     required reviewer and deployment restricted to `v*` tags.

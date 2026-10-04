@@ -56,10 +56,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/badkoubeh/marginkit"
-Source = "https://github.com/badkoubeh/marginkit"
-Changelog = "https://github.com/badkoubeh/marginkit/blob/main/CHANGELOG.md"
-Issues = "https://github.com/badkoubeh/marginkit/issues"
+Homepage = "https://github.com/marginkit/marginkit"
+Source = "https://github.com/marginkit/marginkit"
+Changelog = "https://github.com/marginkit/marginkit/blob/main/CHANGELOG.md"
+Issues = "https://github.com/marginkit/marginkit/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

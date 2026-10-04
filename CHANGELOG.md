@@ -22,6 +22,9 @@ No code, public API, schema or numeric change from 0.1.0; upgrading needs nothin
   relative links break.
 - `[project.urls]` adds the source repository and the issue tracker, next to the existing
   homepage and changelog links.
+- The README and the package description state the scope: physical-AI systems (robotics,
+  control, autonomous vehicles, other safety-critical systems). marginkit stays domain-neutral;
+  nothing in the API changes.
 - Releases are built and published by `.github/workflows/release.yml` through PyPI Trusted
   Publishing: TestPyPI first, an install check, then PyPI after the owner's approval.
   `tools/check_dist.py` holds the artifact checks that CI and the release both run.

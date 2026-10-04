@@ -1,5 +1,5 @@
 # marginkit
-Robustness margins with confidence intervals, via dose-response threshold estimation. Model-agnostic — no GPU, no ML framework required
+Robustness margins with confidence intervals, via dose-response threshold estimation, for physical-AI systems: robotics, control, autonomous vehicles, and other safety-critical systems. Domain-neutral and model-agnostic — no GPU, no ML framework required
 
 > **Status: `0.1.1`.** Binomial dose-response fits, thresholds with profile-likelihood or delta
 > confidence intervals, censoring, ratios of two thresholds with Fieller or log-delta intervals,
@@ -10,10 +10,15 @@ Robustness margins with confidence intervals, via dose-response threshold estima
 ## What it does
 
 You test a system at increasing levels of some stress (the *severity*) and count successes at
-each level. marginkit fits a dose-response curve to those counts and reports the severity at
-which performance crosses a level you choose, with a confidence interval. When the data cannot
+each level: a robot policy under growing sensor latency, a controller under stronger
+disturbances, a perception stack under heavier noise. marginkit fits a dose-response curve to
+those counts and reports the severity at which performance crosses a level you choose, with a
+confidence interval. When the data cannot
 support a number, it says so: a threshold beyond the tested range is censored and reported as a
 bound, and a failed fit carries a status flag and no estimate.
+
+marginkit never needs to know the domain. It works on severities, outcomes and counts, so the
+same estimator serves any physical-AI system; the domain lives in your harness, not here.
 
 ## Install
 
